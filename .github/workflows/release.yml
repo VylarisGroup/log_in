@@ -1,0 +1,35 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: sodium, openssl, mbstring, pdo_mysql, pdo_sqlite
+      - name: Tests
+        run: |
+          composer install --no-interaction --prefer-dist
+          cp .env.example .env && php artisan key:generate
+          php artisan test
+      - name: Release-Archiv bauen
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          rm -rf vendor && composer install --no-dev --optimize-autoloader --no-interaction
+          mkdir dist
+          zip -r "dist/log_in-${VERSION}.zip" . -x '.git/*' '.github/*' 'tests/*' 'dist/*' '.env' 'storage/logs/*' 'storage/framework/cache/*' 'storage/framework/sessions/*' 'database/*.sqlite' 'node_modules/*'
+          (cd dist && sha256sum "log_in-${VERSION}.zip" > SHA256SUMS)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/log_in-*.zip
+            dist/SHA256SUMS

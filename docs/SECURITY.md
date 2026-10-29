@@ -1,0 +1,62 @@
+# Sicherheit
+
+## Grundsaetze
+
+- **Dash ist autoritativ**, log_in speichert keine Konten und keine Passwoerter. Zugangsdaten werden nur durchgereicht und nicht protokolliert.
+- **Fail closed**: bei Dash-Ausfall oder fehlerhafter Dash-Signatur werden keine neuen Berechtigungen erzeugt oder erneuert.
+- **Minimale Faehigkeiten**: nur Authorization Code + Refresh, PKCE S256 Pflicht, exakte Redirect-URIs, keine dynamische Registrierung ([OIDC.md](OIDC.md)).
+- **Keine manuell kopierten Zugangsdaten**: Clients entstehen nur ueber das Pairing, Geheimnisse werden mit X25519-Sealed-Box ausgeliefert.
+
+## Massnahmen
+
+| Bereich | Massnahme |
+|---|---|
+| Server-zu-Server | Ed25519-Signatur ueber Methode, Pfad, Zeitstempel, Nonce, Body-Hash; signierte Antworten, gebunden an die Anfrage-Nonce; Toleranz 60 s; Nonce-Tabelle gegen Replay (`api_nonces`, atomar per Unique-Key); Zeitlimits 5 s / 3 s |
+| Vertrauensbasis | Dash-Schluessel erst nach manueller Fingerprint-Bestaetigung; Dash-API-Eingaben werden strikt validiert (Status, Rollenmuster, `sub`-Identitaet) |
+| Tokens | RS256 (3072 Bit), `kid`, Rotation mit 7 Tagen Ueberlappung, sofortiger Widerruf; Codes 60 s und einmalig, Access 10 min, ID 5 min, Refresh 8 h rotierend; Wiederverwendung von Code oder Refresh-Token widerruft die Sitzung/Tokens |
+| Geheimnisse | Client-Geheimnisse nur als Hash (`hash_equals`), 10 min Uebergang bei Rotation; Signaturschluessel und Setup-Geheimnisse mit `APP_KEY` verschluesselt (AES-256) |
+| Sitzungen | serverseitig, Leerlauf 60 min, absolut 12 h, `sid` als Hash; Cookies `Secure`, `HttpOnly`, `SameSite`; Sitzungs-ID wird beim Login regeneriert |
+| Browser | CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy: no-referrer`, HSTS; CSRF fuer Formulare; `Cache-Control: no-store` bei Token/UserInfo/API |
+| Missbrauch | Rate-Limits: `/login` 30/min plus 8 Fehlversuche je Konto/IP-Schluessel, `/authorize` 60/min, `/token` 120/min, `/userinfo` 240/min, `/revoke` 60/min, `/setup` 60/min, Dash-API 300/min; zusaetzlich Drosselung bei Dash |
+| Fehlermeldungen | einheitliche Meldung bei falschem Passwort/gesperrtem/unbekanntem Konto; keine Details zu Signatur- oder Schluesselfehlern gegenueber Browsern |
+| Redirects | exakte Uebereinstimmung; Redirect-/Logout-URIs ohne Wildcards, ohne Fragment, HTTPS, Host passend zur Domain des Tools; bei ungueltigem Client/Redirect keine Weiterleitung |
+| Logout | Weiterleitung nur auf registrierte URI und nur mit gueltigem `id_token_hint`; sonst Bestaetigungsseite mit CSRF |
+| Audit | Anmeldungen, Fehlschlaege, Token-/Client-/Schluesselereignisse, Pairing, Setup, Recovery, Updates; Retention 180 Tage; sensible Felder werden entfernt |
+| Updates | ausschliesslich GitHub-Releases des festen Repositories, SHA-256-Pruefung, Backup und Rollback der Dateien |
+
+## Tests
+
+Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **83 Tests, 83 bestanden, 568 Assertions**.
+
+| Datei | Tests | Schwerpunkt |
+|---|---|---|
+| `OidcFlowTest` | 27 | Discovery, JWKS, PKCE-Pflicht, state/nonce, Redirect-Pruefung, Code-Replay, Refresh-Rotation und Reuse, UserInfo, Revoke, Logout, Scope-Begrenzung |
+| `DashApiAuthTest` | 8 | Signatur, Zeitstempel, Replay, falscher Schluessel, unbekannte Routen |
+| `RevocationAndOutageTest` | 9 | fail closed, Dash-Ausfall, falsche/fehlende Antwortsignatur, Kontosperre, Push-Widerruf, Cache-Grenzen |
+| `PairingTest` | 14 | Zustandsautomat, Nachweis, URI-Policy, Konflikte, Ablauf, Versiegelung, Rotation, Trennen |
+| `KeyRotationTest` | 5 | Rotation, Ueberlappung, Widerruf, JWKS |
+| `SetupBootstrapTest` | 11 | Token, Admin/TOTP, Fingerprint, Bundle, Aktivierung, Recovery, Sperre nach Abschluss |
+| `UpdateServiceTest` | 3 | Pruefsummen, Release-Abgleich |
+| `CryptoAndPolicyTest` | 6 | Signer, TOTP, UriPolicy |
+
+Die Tests laufen gegen **FakeDash** (`tests/Support/FakeDash.php`), nicht gegen ein echtes Dash.
+
+## Offene Punkte und Einschraenkungen
+
+Ehrliche Liste dessen, was fehlt, nicht getestet wurde oder bewusst begrenzt ist:
+
+1. **Kein Test gegen ein echtes Dash.** Die Dash-Seite der Schnittstelle existiert noch nicht. Verhalten, Latenz und Fehlerformen eines realen Dash sind unbestaetigt; die API ist von log_in definiert ([API.md](API.md)). Bis zur Integration ist der End-to-End-Betrieb nicht nachgewiesen.
+2. **Nicht ausgefuehrt:** Lasttests, Penetrationstest/externes Audit, Tests mit MySQL/MariaDB (Tests laufen nur mit SQLite), Tests auf einem realen Webserver mit Reverse-Proxy, Test des echten GitHub-Update-Pfads (Download/Entpacken/Migration/Rollback wurde nur in Teilen - Pruefsumme, Release-Abgleich - automatisiert getestet), manuelle Browser-Tests der Oberflaeche und Barrierefreiheit.
+3. **Release-Signatur nicht aktiv** (`RELEASE_PUBLIC_KEY` leer): ein kompromittiertes GitHub-Konto koennte ein manipuliertes Release samt passender `SHA256SUMS` ausliefern. Siehe [UPDATES.md](UPDATES.md).
+4. **Update ersetzt nur Dateien, loescht keine entfallenen.** Alte Dateien frueherer Versionen bleiben liegen. Datenbank-Rollback ist manuell (Backup).
+5. **Kein Front-/Back-Channel-Logout.** Tools erfahren einen Rechteentzug nur ueber UserInfo/Refresh oder nach Ablauf der Tokens (max. 10 min Access-Token).
+6. **Signaturpruefung in Tools** ohne UserInfo erkennt keinen Widerruf vor Ablauf (siehe [OIDC.md](OIDC.md)).
+7. **Setup-Token liegt im Klartext auf dem Dateisystem** (0600), bis das Setup abgeschlossen ist. Wer Dateizugriff hat, kann das Setup uebernehmen ([BOOTSTRAP.md](BOOTSTRAP.md)).
+8. **Bootstrap-Bundle** liegt bis zur ersten Dash-Anmeldung im Klartext (0600) auf dem Server; der Transport zu Dash ist Aufgabe des Betreibers.
+9. **Backups** enthalten verschluesselte Schluessel; Schutz der Backup-Dateien und des `APP_KEY` liegt beim Betreiber. Kein Backup-Offsite-Transfer integriert.
+10. **MFA:** log_in setzt kein eigenes MFA fuer Benutzer ein; MFA und Sperrlogik liegen vollstaendig bei Dash. Nur der Setup-Admin nutzt TOTP.
+11. **Kein DPoP/mTLS** fuer Token-Bindung; Bearer-Tokens sind uebertragbar bis zum Ablauf.
+12. **Ein einziger aktiver Signaturalgorithmus (RS256).** Kein ES256/EdDSA.
+13. **Rate-Limits liegen im Cache** (Standard: Datenbank). Hinter Proxy muss `TRUSTED_PROXIES` korrekt gesetzt sein, sonst gilt die Proxy-IP als Client-IP.
+14. **Mehrknotenbetrieb** nicht getestet.
+15. **Sprache:** Oberflaeche und Dokumentation nur auf Deutsch.

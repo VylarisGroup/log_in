@@ -1,0 +1,67 @@
+# Vylaris log_in
+
+Zentraler **OpenID-Connect-Provider (SSO)** des Vylaris-Oekosystems. log_in authentifiziert Benutzer fuer die integrierten Tools; die **Identitaeten, Mandanten und Rollen fuehrt ausschliesslich Dash**. log_in speichert keine Benutzerkonten und keine Passwoerter.
+
+```
+Reseller <-> Dash <-> log_in <-> integrierte Tools
+```
+
+- Reseller sprechen nie direkt mit log_in.
+- Tools melden ihre Benutzer ueber log_in an (OIDC Authorization Code Flow mit PKCE).
+- Tools werden ausschliesslich ueber das **Vylaris Pairing Protocol** (ueber Dash) angebunden.
+- log_in laeuft **nur im integrierten Betrieb** mit Dash. Es gibt keinen Standalone-Modus (Entscheidung des Auftraggebers; das Repository war leer, es gab keinen Altbestand zu erhalten).
+
+## Stack
+
+Laravel 13 / PHP 8.3, [league/oauth2-server](https://oauth2.thephpleague.com/) 9 (gepruefte OAuth2-Kernbibliothek) mit einer eigenen, schmalen OIDC-Schicht, libsodium (Ed25519, X25519) fuer die Dash-Kommunikation, MySQL/MariaDB (SQLite fuer Tests). Keine Daemons, keine Container: Cron + PHP genuegen.
+
+## Schnellstart
+
+```bash
+composer install --no-dev --optimize-autoloader
+cp .env.example .env            # APP_URL / OIDC_ISSUER / DB_* anpassen
+php artisan key:generate
+php artisan migrate --force
+php artisan login:setup:init     # legt das Setup-Token an (nur per Dateizugriff lesbar)
+# Webroot auf public/ zeigen lassen, dann im Browser <APP_URL>/setup oeffnen
+# Cron: * * * * * php /pfad/artisan schedule:run
+```
+
+Der gefuehrte Assistent legt den Setup-Admin, die Schluessel und die Dash-Anbindung an, registriert Dash als erste OIDC-Anwendung und fuehrt Verbindungs- und Integritaetstest aus. Details: [docs/SETUP.md](docs/SETUP.md), [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
+
+## Endpunkte (Kurzuebersicht)
+
+| Zweck | Pfad |
+|---|---|
+| Discovery | `GET /.well-known/openid-configuration` |
+| JWKS | `GET /.well-known/jwks.json` |
+| Authorization | `GET /authorize` |
+| Token | `POST /token` |
+| UserInfo | `GET\|POST /userinfo` |
+| Widerruf (RFC 7009) | `POST /revoke` |
+| Logout (RP-initiated) | `GET\|POST /logout` |
+| Dash-Verwaltungs-API | `/api/dash/v1/*` (signiert, nur Dash) |
+
+## Dokumentation
+
+| Datei | Inhalt |
+|---|---|
+| [DASH_INTEGRATION.md](DASH_INTEGRATION.md) | Briefing fuer die Code-KI, die Dash baut |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architektur, Betriebsarten, Datenmodell, Ausfallverhalten |
+| [docs/OIDC.md](docs/OIDC.md) | Unterstuetzte/ausgeschlossene Flows, Claims, Schluessel |
+| [docs/API.md](docs/API.md) | Dash-API in beide Richtungen |
+| [docs/PAIRING-PROTOCOL.md](docs/PAIRING-PROTOCOL.md) | Pairing-Zustandsautomat und Nachweise |
+| [docs/SECURITY.md](docs/SECURITY.md) | Sicherheitsmassnahmen und bekannte Grenzen |
+| [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | Bedrohungen, Gegenmassnahmen, Tests |
+| [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) | Erstinstallation ohne Authentifizierungsschleife |
+| [docs/SETUP.md](docs/SETUP.md) | Installation und Einrichtung |
+| [docs/UPDATES.md](docs/UPDATES.md) | Updates, Backups, Wiederherstellung |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Betrieb, Cron, Monitoring, Stoerungen |
+
+## Tests
+
+```bash
+php artisan test
+```
+
+Letzter dokumentierter Lauf (SQLite in-memory, simuliertes Dash, siehe [docs/SECURITY.md](docs/SECURITY.md#tests)): **83 Tests, 83 bestanden**. Nicht abgedeckte Punkte und Einschraenkungen stehen transparent in [docs/SECURITY.md](docs/SECURITY.md#offene-punkte-und-einschraenkungen).
