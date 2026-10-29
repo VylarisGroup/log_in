@@ -9,7 +9,7 @@ Das Repository `VylarisGroup/log_in` war beim Start **leer** (keine Commits, kei
 | Vorgehen | Neuaufbau nach Auftrag |
 | Stack | Laravel (wie die uebrigen Vylaris-Tools), PHP 8.3 |
 | OIDC-Basis | `league/oauth2-server` 9 + eigene OIDC-Schicht (ID-Token, Discovery, JWKS, UserInfo, Logout) |
-| Dash-API | wird von log_in definiert (siehe [API.md](API.md)); Dash implementiert sie |
+| Dash-API | einheitlicher Vylaris-Vertrag v1 (Masterspezifikation), siehe [API.md](API.md) und [openapi.yaml](openapi.yaml); die Dash-Endpunkte, die log_in aufruft, sind in API.md Abschnitt 5 festgehalten |
 | Standalone | **kein** Standalone-Betrieb: log_in ist von Dash abhaengig |
 
 ## Rollen und Kommunikationsrichtungen
@@ -22,8 +22,8 @@ Reseller <-> Dash <-> log_in <-> Tools
 |---|---|---|
 | Browser -> log_in | OIDC (`/authorize`, `/login`) | Dash prueft Zugangsdaten, SSO-Sitzung in log_in |
 | Tool -> log_in | `/token`, `/userinfo`, `/revoke`, `/logout` | Client-Secret (basic/post) + PKCE, Bearer-JWT |
-| log_in -> Dash | `/api/vylaris/v1/*` | Ed25519-signierte Anfrage, signierte Antwort |
-| Dash -> log_in | `/api/dash/v1/*` | Ed25519-signierte Anfrage, signierte Antwort |
+| log_in -> Dash | `/api/vylaris/v1/*` | Bearer-Service-Token + Ed25519-signierte Anfrage, signierte Antwort |
+| Dash -> log_in | `/api/vylaris/v1/*` | Bearer-Service-Token + Ed25519-signierte Anfrage, signierte Antwort |
 | Dash (als Tool) -> log_in | OIDC wie jedes andere Tool | erste registrierte OIDC-Anwendung |
 
 Es gibt **keine zyklische Abhaengigkeit zur Laufzeit**: die Server-zu-Server-Kanaele benutzen Signaturschluessel, die beim Setup ueber einen Fingerprint-Abgleich etabliert wurden, nie eine Browser-Sitzung oder ein OIDC-Token. Dash kann sich daher ueber log_in anmelden, waehrend log_in Dash ueber einen davon unabhaengigen Kanal befragt.
@@ -50,8 +50,8 @@ Ein Modus "Standalone" existiert nicht. Wuerde Dash entfernt, koennen sich keine
 | ID-Token | `IdTokenResponse`, `ClaimsBuilder` | ID-Token, scope-basierte Claims |
 | Schluessel | `KeyManager`, `TokenVerifier` | RS256, Rotation, Widerruf, JWKS |
 | Sitzungen | `SsoSessions` | serverseitige SSO-Sitzungen, Widerruf |
-| Dash-Client | `app/Services/Dash/DashClient.php` | signierte Aufrufe, Antwortpruefung, Cache |
-| Dash-API | `DashApiController`, `VerifyDashSignature` | Verwaltung durch Dash |
+| Dash-Client | `app/Services/Dash/DashClient.php`, `SsrfGuard` | Bearer + signierte Aufrufe, Antwortpruefung, SSRF-Schutz, Cache |
+| Dash-API | `ManagementApiController`, `VerifyMachineRequest`, `EnforceIdempotency`, `ServiceTokens` | Verwaltung durch Dash (Bearer + Signatur, Idempotenz) |
 | Pairing | `PairingService` | Zustandsautomat, Client-Erzeugung |
 | Setup | `SetupService`, `SetupController` | Erstsetup, Wartung, Recovery |
 | Updates | `UpdateService` | GitHub-Releases, Pruefsumme, Rollback |
@@ -71,7 +71,7 @@ Migration: `database/migrations/2026_10_29_000001_create_login_core_tables.php` 
 | Refresh Token | 8 h, rotierend, nur mit `offline_access` | Wiederverwendung widerruft die ganze SSO-Sitzung |
 | SSO-Sitzung | 60 min Leerlauf, 12 h absolut | Logout, Dash-Push, Kontosperre, Reuse-Erkennung |
 
-Zeitnaher Rechteentzug wird dreifach erreicht: (1) Dash-Push `POST /api/dash/v1/users/{sub}/revoke` (sofort), (2) Refresh und Authorize pruefen den Kontostatus, Refresh **ohne** Cache, (3) Zwischenspeicher der Identitaetsdaten ist auf `DASH_CLAIMS_CACHE_TTL` (Standard 60 s) begrenzt.
+Zeitnaher Rechteentzug wird dreifach erreicht: (1) Dash-Push `POST /api/vylaris/v1/users/{sub}/revoke` (sofort), (2) Refresh und Authorize pruefen den Kontostatus, Refresh **ohne** Cache, (3) Zwischenspeicher der Identitaetsdaten ist auf `DASH_CLAIMS_CACHE_TTL` (Standard 60 s) begrenzt.
 
 ## Ausfallverhalten (sicherer Betriebszustand bei Dash-Ausfall)
 

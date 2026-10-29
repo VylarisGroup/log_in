@@ -21,8 +21,8 @@ class KeyRotationTest extends DashTestCase
         [$c, $secret, $old] = $this->login();
         [$h1] = $this->jwtParts($old['access_token']);
 
-        $r = $this->dashApi('POST', '/api/dash/v1/keys/rotate')->assertCreated();
-        $newKid = $r->json('kid');
+        $r = $this->dashApi('POST', '/api/vylaris/v1/keys/rotate')->assertCreated();
+        $newKid = $r->json('data.key_id');
         $this->assertNotSame($h1['kid'], $newKid);
 
         $kids = array_column($this->getJson('/.well-known/jwks.json')->json('keys'), 'kid');
@@ -38,7 +38,7 @@ class KeyRotationTest extends DashTestCase
     public function test_retired_key_disappears_after_overlap_period(): void
     {
         [, , $old] = $this->login();
-        $this->dashApi('POST', '/api/dash/v1/keys/rotate')->assertCreated();
+        $this->dashApi('POST', '/api/vylaris/v1/keys/rotate')->assertCreated();
         $this->travel(config('vylaris.keys.rotation_overlap_days') + 1)->days();
         $this->assertCount(1, $this->getJson('/.well-known/jwks.json')->json('keys'));
         $this->getJson('/userinfo', ['Authorization' => 'Bearer '.$old['access_token']])->assertStatus(401);
@@ -48,7 +48,7 @@ class KeyRotationTest extends DashTestCase
     {
         [, , $j] = $this->login();
         $kid = $this->jwtParts($j['access_token'])[0]['kid'];
-        $this->dashApi('POST', "/api/dash/v1/keys/$kid/revoke")->assertOk()->assertJsonPath('status', 'revoked');
+        $this->dashApi('POST', "/api/vylaris/v1/keys/$kid/revoke")->assertOk()->assertJsonPath('data.status', 'revoked');
 
         $this->getJson('/userinfo', ['Authorization' => 'Bearer '.$j['access_token']])->assertStatus(401);
         $keys = $this->getJson('/.well-known/jwks.json')->json('keys');
@@ -63,7 +63,7 @@ class KeyRotationTest extends DashTestCase
         $this->assertStringNotContainsString('PRIVATE KEY', $row->getRawOriginal('private_enc'));
         $this->assertArrayNotHasKey('private_enc', $row->toArray());
         $this->assertStringNotContainsString('PRIVATE', $this->getJson('/.well-known/jwks.json')->getContent());
-        $list = $this->dashApi('GET', '/api/dash/v1/keys')->assertOk();
+        $list = $this->dashApi('GET', '/api/vylaris/v1/keys')->assertOk();
         $this->assertStringNotContainsString('PRIVATE', $list->getContent());
         $this->assertStringNotContainsString('private_enc', $list->getContent());
     }

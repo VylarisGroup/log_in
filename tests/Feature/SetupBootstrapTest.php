@@ -66,6 +66,8 @@ class SetupBootstrapTest extends DashTestCase
         $this->post('/setup/client', ['redirect_uris' => "https://dash.test/auth/callback\n", 'post_logout_uris' => 'https://dash.test/'])->assertRedirect('/setup');
         $bundle = json_decode(File::get(storage_path('app/bootstrap/dash-bootstrap.json')), true);
         $this->loginKeys['public'] = $bundle['log_in_public_key']; // Dash importiert den log_in-Schluessel aus dem Bundle
+        $this->dashToken = $bundle['service_token']; // ... und die beiden Service-Token
+        $this->dashOutboundToken = $bundle['login_to_dash_token'];
 
         return [$bundle, $secret];
     }
@@ -100,6 +102,12 @@ class SetupBootstrapTest extends DashTestCase
         $this->assertSame('https://login.test', $bundle['issuer']);
         $this->assertStringStartsWith('vl_dash_', $bundle['client_id']);
         $this->assertSame(Setting::get('login.sign_public'), $bundle['log_in_public_key']);
+        $this->assertSame('https://login.test/api/vylaris/v1', $bundle['api_base']);
+        $this->assertSame('vylaris-login-bootstrap/2', $bundle['schema']);
+        // Nur der Hash des Dash->log_in-Tokens liegt in der Datenbank, nie der Klartext
+        $this->assertDatabaseHas('service_tokens', ['token_hash' => hash('sha256', $bundle['service_token']), 'status' => 'active']);
+        $this->assertDatabaseMissing('service_tokens', ['token_hash' => $bundle['service_token']]);
+        $this->assertNotSame($bundle['service_token'], $bundle['login_to_dash_token']);
         $this->assertSame('0600', substr(sprintf('%o', fileperms(storage_path('app/bootstrap/dash-bootstrap.json'))), -4));
 
         // Verbindungstest: signierter Aufruf log_in -> Dash, kein Login/Session noetig

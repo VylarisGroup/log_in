@@ -87,8 +87,8 @@ Ein Client erhaelt nur die Scopes, die im Pairing freigegeben wurden. `sub` ist 
 ## Schluessel und Rotation
 
 - Ein aktiver RS256-Schluessel, privat mit `APP_KEY` verschluesselt in der Datenbank.
-- Rotation: `php artisan login:keys:rotate` oder `POST /api/dash/v1/keys/rotate`. Der alte Schluessel bleibt 7 Tage (`vylaris.keys.rotation_overlap_days`) in der JWKS, damit laufende Tokens pruefbar bleiben; neue Tokens nutzen sofort den neuen `kid`.
-- Kompromittierung: `php artisan login:keys:rotate --revoke=<kid>` bzw. `POST /api/dash/v1/keys/{kid}/revoke` -> Schluessel verschwindet sofort aus der JWKS, damit signierte Tokens werden bei UserInfo abgelehnt; ein neuer aktiver Schluessel entsteht.
+- Rotation: `php artisan login:keys:rotate` oder `POST /api/vylaris/v1/keys/rotate`. Der alte Schluessel bleibt 7 Tage (`vylaris.keys.rotation_overlap_days`) in der JWKS, damit laufende Tokens pruefbar bleiben; neue Tokens nutzen sofort den neuen `kid`.
+- Kompromittierung: `php artisan login:keys:rotate --revoke=<kid>` bzw. `POST /api/vylaris/v1/keys/{key_id}/revoke` -> Schluessel verschwindet sofort aus der JWKS, damit signierte Tokens werden bei UserInfo abgelehnt; ein neuer aktiver Schluessel entsteht.
 - Clients muessen die JWKS zwischenspeichern (Cache-Control 300 s) und bei unbekanntem `kid` neu laden.
 
 ## Logout

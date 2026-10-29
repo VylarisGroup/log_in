@@ -46,5 +46,22 @@ return [
         'offline_access' => 'Refresh-Token (Sitzung ueber Access-Token-Lebensdauer hinaus)',
     ],
 
-    'version' => '1.0.0',
+    // Einheitlicher Vertrag aller Vylaris-Projekte: API-Version und Basis-Pfad (einzige Stelle im Code).
+    'api_version' => 'v1',
+    'api_prefix' => '/api/vylaris/v1',
+
+    'service_token' => [
+        'ttl_days' => (int) env('SERVICE_TOKEN_TTL_DAYS', 90),
+        'grace_minutes' => 10,      // Ueberlappung nach Rotation
+    ],
+
+    'idempotency_ttl_hours' => 24,
+
+    // SSRF-Schutz fuer die Verbindung zu Dash. Lockerungen wirken nie in Produktion (siehe SsrfGuard).
+    'ssrf' => [
+        'enforce' => (bool) env('VYLARIS_SSRF_ENFORCE', true),
+        'allow_private' => (bool) env('VYLARIS_ALLOW_PRIVATE_TARGETS', false),
+    ],
+
+    'version' => '1.1.0',
 ];

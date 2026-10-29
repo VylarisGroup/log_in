@@ -1,0 +1,498 @@
+openapi: 3.1.0
+info:
+  title: Vylaris Unified API v1 - log_in
+  version: 1.1.0
+  description: |
+    Verwaltungsschnittstelle von log_in (Dash -> log_in) sowie die Dash-Endpunkte, die log_in aufruft (log_in -> Dash).
+    Gemeinsamer Vertrag aller Vylaris-Projekte. Deutsche Ausfuehrung: docs/API.md.
+
+    **Authentifizierung aller Maschinenrequests (ausser Discovery):** `Authorization: Bearer <Service-Token>` UND
+    Ed25519-Signatur (`X-Vylaris-Key-Id`, `X-Vylaris-Timestamp`, `X-Vylaris-Nonce`, `X-Vylaris-Signature`).
+
+    Kanonischer Request (kein abschliessender Zeilenumbruch):
+    `VYLARIS-V1\n<METHOD>\n<PATH_AND_QUERY>\n<TIMESTAMP>\n<NONCE>\n<sha256_hex(raw body)>`
+
+    Kanonische Antwort (Header `X-Vylaris-Key-Id`, `X-Vylaris-Timestamp`, `X-Vylaris-Signature`):
+    `VYLARIS-V1-RESP\n<STATUS>\n<REQUEST_NONCE>\n<RESPONSE_TIMESTAMP>\n<sha256_hex(raw body)>`
+
+    Ausnahmen von der Antwortsignatur (bewusst unsigniert): `GET /api/vylaris/v1/discovery`, `GET /.well-known/vylaris-login`,
+    OIDC-Metadaten (`/.well-known/openid-configuration`, `/.well-known/jwks.json`) und die OIDC-Endpunkte fuer Browser/Tools.
+    Testvektoren: docs/test-vectors.json.
+servers:
+  - url: https://login.example.ch/api/vylaris/v1
+security:
+  - bearerAuth: []
+    vylarisSignature: []
+paths:
+  /discovery:
+    get:
+      summary: Vylaris-Discovery von log_in (oeffentlich, unsigniert)
+      security: []
+      responses:
+        '200':
+          description: Discovery-Dokument
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Discovery' }
+  /health:
+    get:
+      summary: Zustand (Scope service.health)
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /pairing-window:
+    get:
+      summary: Zustand des Pairing-Fensters (Scope pairings.manage)
+      responses:
+        '200': { $ref: '#/components/responses/PairingWindow' }
+    post:
+      summary: Pairing-Fenster oeffnen (30-900 s, Standard 300 s)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                duration_seconds: { type: integer, minimum: 30, maximum: 900, default: 300 }
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201': { $ref: '#/components/responses/PairingWindow' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Pairing-Fenster schliessen
+      responses:
+        '200': { $ref: '#/components/responses/PairingWindow' }
+  /pairings:
+    post:
+      summary: Pairing-Anfrage anlegen (nur bei offenem Fenster, sonst pairing_closed)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PairingRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/Pairing' }
+        '200': { $ref: '#/components/responses/Pairing' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /pairings/{id}:
+    get:
+      summary: Pairing abfragen
+      parameters: [{ $ref: '#/components/parameters/PairingId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Pairing' }
+        '404': { $ref: '#/components/responses/Error' }
+  /pairings/{id}/approve:
+    post:
+      summary: Genehmigen; Dash nennt die genehmigten Scopes ausdruecklich (Teilmenge der angeforderten, inkl. openid)
+      parameters: [{ $ref: '#/components/parameters/PairingId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved_scopes]
+              properties:
+                approved_scopes: { type: array, items: { $ref: '#/components/schemas/Scope' }, minItems: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/Pairing' }
+        '403': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /pairings/{id}/reject:
+    post:
+      summary: Ablehnen
+      parameters: [{ $ref: '#/components/parameters/PairingId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { $ref: '#/components/responses/Pairing' }
+  /pairings/{id}/cancel:
+    post:
+      summary: Abbrechen
+      parameters: [{ $ref: '#/components/parameters/PairingId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { $ref: '#/components/responses/Pairing' }
+  /pairings/{id}/confirm:
+    post:
+      summary: Nachweis des Tools pruefen und Integration aktivieren (liefert sealed_credentials)
+      parameters: [{ $ref: '#/components/parameters/PairingId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proof]
+              properties:
+                proof: { type: string, description: 'Base64 Ed25519-Signatur ueber den kanonischen Pairing-Nachweis (VYLARIS-PAIR-V1, siehe docs/PAIRING-PROTOCOL.md)' }
+      responses:
+        '200': { $ref: '#/components/responses/Pairing' }
+        '409': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /pairings/{id}/credentials-ack:
+    post:
+      summary: Empfang der Zugangsdaten bestaetigen (loescht sealed_credentials)
+      parameters: [{ $ref: '#/components/parameters/PairingId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { $ref: '#/components/responses/Pairing' }
+  /clients:
+    get:
+      summary: OIDC-Clients (Kacheln); meta.pending_pairings = offene Pairings (Scope clients.read)
+      responses:
+        '200':
+          description: Liste
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Client' } }
+                  meta:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      pending_pairings: { type: array, items: { type: object } }
+  /clients/{client_id}:
+    parameters: [{ $ref: '#/components/parameters/ClientId' }]
+    get:
+      summary: Client lesen
+      responses:
+        '200': { $ref: '#/components/responses/Client' }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: redirect_uris, post_logout_uris, scopes, version aendern (Scope clients.manage)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                redirect_uris: { type: array, items: { type: string, format: uri } }
+                post_logout_uris: { type: array, items: { type: string, format: uri } }
+                scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+                version: { type: string, maxLength: 32 }
+      responses:
+        '200': { $ref: '#/components/responses/Client' }
+        '422': { $ref: '#/components/responses/Error' }
+  /clients/{client_id}/suspend:
+    post:
+      summary: Sperren (Tokens widerrufen)
+      parameters: [{ $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { $ref: '#/components/responses/Client' } }
+  /clients/{client_id}/resume:
+    post:
+      summary: Entsperren
+      parameters: [{ $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { $ref: '#/components/responses/Client' } }
+  /clients/{client_id}/disconnect:
+    post:
+      summary: Trennen (Tokens widerrufen, Geheimnis geloescht)
+      parameters: [{ $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { $ref: '#/components/responses/Client' } }
+  /clients/{client_id}/report-error:
+    post:
+      summary: Fehlerstatus setzen
+      parameters: [{ $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { $ref: '#/components/responses/Client' } }
+  /clients/{client_id}/rotate-secret:
+    post:
+      summary: Neues Client-Geheimnis (versiegelt fuer das Tool); altes 10 Minuten gueltig
+      parameters: [{ $ref: '#/components/parameters/ClientId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200':
+          description: Versiegeltes Geheimnis
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      client_id: { type: string }
+                      sealed_credentials: { type: string, description: 'Base64 libsodium Sealed Box fuer tool_box_public_key' }
+                      previous_secret_valid_until: { type: string, format: date-time }
+  /keys:
+    get:
+      summary: OIDC-Signaturschluessel (ohne private Teile; Scope keys.manage)
+      responses:
+        '200':
+          description: Liste
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Key' } }
+                  meta: { type: object, properties: { total: { type: integer } } }
+  /keys/rotate:
+    post:
+      summary: OIDC-Signaturschluessel rotieren (alter bleibt 7 Tage in der JWKS)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201':
+          description: Neuer Schluessel
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, properties: { key_id: { type: string }, status: { type: string } } }
+  /keys/{key_id}/revoke:
+    post:
+      summary: Schluessel sofort widerrufen
+      parameters:
+        - { name: key_id, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Widerrufen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, properties: { key_id: { type: string }, status: { type: string, const: revoked } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /users/{sub}/revoke:
+    post:
+      summary: Sitzungen und Tokens des Kontos widerrufen (Scope users.revoke)
+      parameters:
+        - { name: sub, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Widerrufen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, properties: { sub: { type: string }, revoked_sessions: { type: integer } } }
+  /users/{sub}/refresh:
+    post:
+      summary: Identitaets-Cache invalidieren (Rollen/Mandant geaendert)
+      parameters:
+        - { name: sub, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Invalidiert
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, properties: { sub: { type: string }, cache: { type: string } } }
+  /service-tokens/rotate:
+    post:
+      summary: Service-Token rotieren (Scope service.rotate); beide neuen Token kommen versiegelt an den X25519-Schluessel von Dash
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200':
+          description: Versiegelte neue Token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sealed_tokens: { type: string, description: 'Sealed Box mit JSON {service_token, login_to_dash_token, service_token_expires_at}' }
+                      previous_token_grace_seconds: { type: integer }
+x-dash-endpoints-used-by-log-in:
+  description: |
+    Endpunkte, die DASH bereitstellen muss und die log_in aufruft (Basis: <dash>/api/vylaris/v1, Bearer = login_to_dash_token + Signatur;
+    Antworten signiert mit X-Vylaris-Key-Id der Dash-Installation). Ausnahme: Discovery.
+  endpoints:
+    - { method: GET, path: /.well-known/vylaris-dash, signed: false, note: 'Discovery; {"data": {api_version, installation_id, name, public_key, box_public_key?}}' }
+    - { method: GET, path: /health, signed: true, response: '{"data":{"status":"ok"}}' }
+    - { method: POST, path: /auth/credentials/verify, signed: true, request: '{identifier, password, mfa_code?, client_ip?}', response: '{"data":{"result":"ok|invalid|mfa_required|locked|disabled","sub?":"...","amr?":["pwd","otp"]}}', note: 'Zusatz zur Masterliste; ohne diesen Endpunkt ist keine Anmeldung moeglich' }
+    - { method: GET, path: '/users/{id}', signed: true, response: '{"data":{"id|sub","status":"active|disabled|locked|deleted","name","email","email_verified","tenant_id","roles":[],"updated_at"}}', note: '404/410 = geloescht' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 'Service-API-Token (vlst_...), an Installation und Scopes gebunden, laeuft ab, widerrufbar. Nicht austauschbar mit Tool-API- oder OIDC-Access-Token.'
+    vylarisSignature:
+      type: apiKey
+      in: header
+      name: X-Vylaris-Signature
+      description: 'Zusammen mit X-Vylaris-Key-Id, X-Vylaris-Timestamp (+-60 s) und X-Vylaris-Nonce (16-64 Zeichen, einmalig, 180 s gespeichert).'
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: '8-128 Zeichen [A-Za-z0-9_.:-]; 24 h gespeichert. Gleicher Key + gleicher Body = gleiche Antwort (Header Idempotent-Replayed), anderer Body = idempotency_conflict.'
+      schema: { type: string }
+    PairingId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{16,64}$' }
+    ClientId:
+      name: client_id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Einheitlicher Fehler
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Health:
+      description: Zustand
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: object
+                properties:
+                  status: { type: string }
+                  version: { type: string }
+                  api_version: { type: string }
+                  issuer: { type: string }
+                  active_key_id: { type: [string, 'null'] }
+                  service_token_expires_at: { type: [string, 'null'] }
+                  time: { type: string, format: date-time }
+    PairingWindow:
+      description: Pairing-Fenster
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: object
+                properties:
+                  open: { type: boolean }
+                  expires_at: { type: [string, 'null'], format: date-time }
+    Pairing:
+      description: Pairing
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: '#/components/schemas/Pairing' }
+    Client:
+      description: Client
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { $ref: '#/components/schemas/Client' }
+  schemas:
+    Scope:
+      type: string
+      enum: [openid, profile, email, vylaris, offline_access]
+    ServiceScope:
+      type: string
+      description: Berechtigungen des Service-Tokens
+      enum: [service.health, pairings.manage, clients.read, clients.manage, keys.manage, users.revoke, service.rotate]
+    ErrorCode:
+      type: string
+      enum: [unauthorized, invalid_token, token_expired, invalid_signature, timestamp_out_of_range, replay_detected, forbidden, pairing_closed, pairing_expired, pairing_denied, invalid_pairing_proof, installation_revoked, resource_not_found, duplicate_conflict, idempotency_conflict, validation_failed, rate_limited, service_unavailable, internal_error]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            details: { type: [object, array] }
+    Discovery:
+      type: object
+      properties:
+        service: { type: string, const: log_in }
+        api_version: { type: string, const: v1 }
+        version: { type: string }
+        installation_id: { type: string }
+        name: { type: string }
+        public_key: { type: string, description: 'Ed25519, Base64, 32 Byte' }
+        issuer: { type: string, format: uri }
+        api_base: { type: string, format: uri }
+        openid_configuration: { type: string, format: uri }
+    PairingRequest:
+      type: object
+      required: [pairing_id, installation_id, tool_id, name, base_url, redirect_uris, scopes, tool_sign_public_key, tool_box_public_key]
+      properties:
+        pairing_id: { type: string, pattern: '^[A-Za-z0-9_-]{16,64}$' }
+        installation_id: { type: string, pattern: '^[A-Za-z0-9_.:-]{8,128}$' }
+        tool_id: { type: string, pattern: '^[a-z0-9][a-z0-9_.-]{1,63}$' }
+        name: { type: string, maxLength: 100 }
+        version: { type: string, maxLength: 32 }
+        base_url: { type: string, format: uri, description: 'oeffentliche HTTPS-Basis-URL des Tools; Redirect-/Logout-URIs muessen auf diesem Host (oder einer Subdomain) liegen' }
+        redirect_uris: { type: array, items: { type: string, format: uri }, minItems: 1, maxItems: 10 }
+        post_logout_uris: { type: array, items: { type: string, format: uri }, maxItems: 10 }
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' }, description: 'angeforderte Scopes (muss openid enthalten)' }
+        tool_sign_public_key: { type: string, description: 'Ed25519 Base64, 32 Byte' }
+        tool_box_public_key: { type: string, description: 'X25519 Base64, 32 Byte' }
+    Pairing:
+      type: object
+      properties:
+        pairing_id: { type: string }
+        state: { type: string, enum: [requested, dash_approved, active, rejected, cancelled, expired, failed] }
+        installation_id: { type: string }
+        tool_id: { type: string }
+        name: { type: string }
+        base_url: { type: string }
+        domain: { type: string }
+        version: { type: [string, 'null'] }
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        approved_scopes: { type: [array, 'null'], items: { $ref: '#/components/schemas/Scope' } }
+        redirect_uris: { type: array, items: { type: string } }
+        expires_at: { type: string, format: date-time }
+        dash_approved_at: { type: [string, 'null'] }
+        confirmed_at: { type: [string, 'null'] }
+        failure_reason: { type: [string, 'null'] }
+        challenge: { type: string, description: 'nur in requested/dash_approved; einmalig' }
+        client_id: { type: string, description: 'nur in active' }
+        sealed_credentials: { type: string, description: 'nur in active bis zur Quittierung; Sealed Box fuer tool_box_public_key' }
+    Client:
+      type: object
+      properties:
+        client_id: { type: string }
+        installation_id: { type: string }
+        tool_id: { type: [string, 'null'] }
+        name: { type: string }
+        base_url: { type: [string, 'null'] }
+        domain: { type: string }
+        version: { type: [string, 'null'] }
+        status: { type: string, enum: [active, error, suspended, disconnected] }
+        confidential: { type: boolean }
+        redirect_uris: { type: array, items: { type: string } }
+        post_logout_uris: { type: array, items: { type: string } }
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        last_error: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
+    Key:
+      type: object
+      properties:
+        key_id: { type: string }
+        alg: { type: string, const: RS256 }
+        status: { type: string }
+        activated_at: { type: [string, 'null'] }
+        retire_after: { type: [string, 'null'] }

@@ -21,7 +21,7 @@ class RevocationAndOutageTest extends DashTestCase
         [$c, $secret, $j] = $this->tokens();
         $this->getJson('/userinfo', ['Authorization' => 'Bearer '.$j['access_token']])->assertOk();
 
-        $this->dashApi('POST', '/api/dash/v1/users/u-alice/revoke', ['reason' => 'account_blocked'])->assertOk()->assertJsonPath('revoked_sessions', 1);
+        $this->dashApi('POST', '/api/vylaris/v1/users/u-alice/revoke', ['reason' => 'account_blocked'])->assertOk()->assertJsonPath('data.revoked_sessions', 1);
 
         $this->getJson('/userinfo', ['Authorization' => 'Bearer '.$j['access_token']])->assertStatus(401);
         $this->post('/token', ['grant_type' => 'refresh_token', 'refresh_token' => $j['refresh_token']], ['Authorization' => 'Basic '.base64_encode($c->client_id.':'.$secret)])->assertStatus(400);
@@ -62,7 +62,7 @@ class RevocationAndOutageTest extends DashTestCase
         [, , $j] = $this->tokens();
         $this->getJson('/userinfo', ['Authorization' => 'Bearer '.$j['access_token']])->assertJsonPath('roles', ['admin']);
         $this->dashUsers['u-alice']['roles'] = ['member'];
-        $this->dashApi('POST', '/api/dash/v1/users/u-alice/refresh')->assertOk();
+        $this->dashApi('POST', '/api/vylaris/v1/users/u-alice/refresh')->assertOk();
         $this->getJson('/userinfo', ['Authorization' => 'Bearer '.$j['access_token']])->assertJsonPath('roles', ['member']);
     }
 

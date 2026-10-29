@@ -18,17 +18,22 @@
 | `login:maintenance` | Aufraeumen von Hand |
 | `login:backup`, `login:restore` | Sicherung / Wiederherstellung |
 | `login:update:check`, `login:update:apply` | Updates |
+| `login:dash:revoke-tokens` | Notfall: alle Service-Token der Dash-Installation widerrufen |
 
 ## Schluesselrotation
 
 Empfohlen alle 90 Tage: `php artisan login:keys:rotate`. Neue Tokens tragen sofort die neue `kid`; der alte Schluessel bleibt 7 Tage in der JWKS. Tools muessen die JWKS bei unbekannter `kid` neu laden. Kompromittierung: `--revoke=<kid>`; bestehende Tokens dieses Schluessels werden bei UserInfo abgelehnt.
+
+## Service-Token
+
+Dash rotiert sein Token per `POST /api/vylaris/v1/service-tokens/rotate` (Standardlaufzeit 90 Tage, Empfehlung: nach 60 Tagen). `GET /api/vylaris/v1/health` zeigt `service_token_expires_at`. Ist es abgelaufen oder widerrufen: `php artisan login:recovery:issue` und Bootstrap wiederholen (neues Bundle). Siehe [API.md](API.md) Abschnitt 6.
 
 ## Ueberwachung
 
 | Pruefung | Mittel |
 |---|---|
 | Dienst erreichbar | `GET /.well-known/openid-configuration` (200) |
-| Dash-Anbindung | `login:status`; Audit-Eintraege `login.dash_protocol_error`, `api.signature_invalid`, `api.replay_blocked` |
+| Dash-Anbindung | `login:status`; Audit-Eintraege `login.dash_protocol_error`, `api.signature_invalid`, `api.replay_blocked`, `api.forbidden` |
 | Cron laeuft | Crontab-Eintrag pruefen (`crontab -l`); `php artisan schedule:list` zeigt die Plaene. Ohne Cron werden Pairings erst beim Zugriff als abgelaufen erkannt und Altdaten nicht bereinigt |
 | Fehler | `storage/logs/laravel.log` (taeglich rotiert) |
 

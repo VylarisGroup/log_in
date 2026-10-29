@@ -5,13 +5,16 @@
 - **Dash ist autoritativ**, log_in speichert keine Konten und keine Passwoerter. Zugangsdaten werden nur durchgereicht und nicht protokolliert.
 - **Fail closed**: bei Dash-Ausfall oder fehlerhafter Dash-Signatur werden keine neuen Berechtigungen erzeugt oder erneuert.
 - **Minimale Faehigkeiten**: nur Authorization Code + Refresh, PKCE S256 Pflicht, exakte Redirect-URIs, keine dynamische Registrierung ([OIDC.md](OIDC.md)).
+- **Zwei Faktoren fuer jeden Maschinenrequest**: Bearer-Service-Token (Installation, Scopes, Ablauf, Widerruf) *und* Ed25519-Signatur; keines allein genuegt.
 - **Keine manuell kopierten Zugangsdaten**: Clients entstehen nur ueber das Pairing, Geheimnisse werden mit X25519-Sealed-Box ausgeliefert.
 
 ## Massnahmen
 
 | Bereich | Massnahme |
 |---|---|
-| Server-zu-Server | Ed25519-Signatur ueber Methode, Pfad, Zeitstempel, Nonce, Body-Hash; signierte Antworten, gebunden an die Anfrage-Nonce; Toleranz 60 s; Nonce-Tabelle gegen Replay (`api_nonces`, atomar per Unique-Key); Zeitlimits 5 s / 3 s |
+| Server-zu-Server | Bearer-Service-Token (nur Hash gespeichert, Scopes, Ablauf 90 Tage, Rotation als Sealed Box, Widerruf) + Ed25519-Signatur ueber Methode, Pfad, Zeitstempel, Nonce, Body-Hash; signierte Antworten inkl. `X-Vylaris-Key-Id`, gebunden an die Anfrage-Nonce; Toleranz 60 s; Nonce-Tabelle gegen Replay (atomar per Unique-Key); Idempotency-Key (24 h); Zeitlimits 5 s / 3 s; einheitlicher Fehlervertrag ohne interne Details |
+| SSRF | Aufrufe an Dash: nur HTTPS, keine privaten/Loopback/Link-Local/CGNAT/Multicast-Ziele, DNS-Aufloesung geprueft und festgenagelt, Redirects aus; `base_url` von Tools wird bei Pairing validiert; Lockerungen wirken nie in Produktion |
+| Pairing | explizit geoeffnetes Fenster (30-900 s), ausdrueckliche Genehmigung einer Scope-Teilmenge, sprachneutraler Nachweis, Sealed Box fuer Geheimnisse |
 | Vertrauensbasis | Dash-Schluessel erst nach manueller Fingerprint-Bestaetigung; Dash-API-Eingaben werden strikt validiert (Status, Rollenmuster, `sub`-Identitaet) |
 | Tokens | RS256 (3072 Bit), `kid`, Rotation mit 7 Tagen Ueberlappung, sofortiger Widerruf; Codes 60 s und einmalig, Access 10 min, ID 5 min, Refresh 8 h rotierend; Wiederverwendung von Code oder Refresh-Token widerruft die Sitzung/Tokens |
 | Geheimnisse | Client-Geheimnisse nur als Hash (`hash_equals`), 10 min Uebergang bei Rotation; Signaturschluessel und Setup-Geheimnisse mit `APP_KEY` verschluesselt (AES-256) |
@@ -26,26 +29,28 @@
 
 ## Tests
 
-Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **83 Tests, 83 bestanden, 568 Assertions**.
+Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **103 Tests, 103 bestanden, 733 Assertions**.
 
 | Datei | Tests | Schwerpunkt |
 |---|---|---|
-| `OidcFlowTest` | 27 | Discovery, JWKS, PKCE-Pflicht, state/nonce, Redirect-Pruefung, Code-Replay, Refresh-Rotation und Reuse, UserInfo, Revoke, Logout, Scope-Begrenzung |
-| `DashApiAuthTest` | 8 | Signatur, Zeitstempel, Replay, falscher Schluessel, unbekannte Routen |
-| `RevocationAndOutageTest` | 9 | fail closed, Dash-Ausfall, falsche/fehlende Antwortsignatur, Kontosperre, Push-Widerruf, Cache-Grenzen |
-| `PairingTest` | 14 | Zustandsautomat, Nachweis, URI-Policy, Konflikte, Ablauf, Versiegelung, Rotation, Trennen |
+| `OidcFlowTest` | 27 | Discovery, JWKS, PKCE-Pflicht, state/nonce, Redirect-Pruefung, Code-Replay, Refresh-Rotation und Reuse, UserInfo, Revoke, Logout, Scope-Begrenzung, MFA-Login |
+| `MachineContractTest` | 14 | Bearer Pflicht, Signatur allein reicht nicht, OIDC-Token als Bearer abgelehnt, Token nur als Hash, abgelaufen/widerrufen/Installation widerrufen, fehlender Scope (signierte 403), Fehlerformat, Alt-Pfade 404, Discovery unsigniert, Idempotenz, Token-Rotation (Sealed Box), ausgehende Bearer-Aufrufe, SSRF-Schutz |
+| `DashApiAuthTest` | 8 | Signatur, Zeitstempel, Replay, falscher Schluessel/Key-Id, manipulierter Body, unsignierte/gefaelschte Dash-Antworten, HTTPS-Pflicht |
+| `RevocationAndOutageTest` | 9 | fail closed, Dash-Ausfall, Kontosperre, Push-Widerruf, Cache-Grenzen |
+| `PairingTest` | 18 | Zustandsautomat, offenes Fenster, ausdrueckliche Genehmigung, Nachweisbindung, URI-/base_url-Policy, Konflikte, Ablauf, Versiegelung, Rotation, Trennen |
 | `KeyRotationTest` | 5 | Rotation, Ueberlappung, Widerruf, JWKS |
-| `SetupBootstrapTest` | 11 | Token, Admin/TOTP, Fingerprint, Bundle, Aktivierung, Recovery, Sperre nach Abschluss |
+| `SetupBootstrapTest` | 11 | Token, Admin/TOTP, Fingerprint, Bundle inkl. Service-Token, Aktivierung, Recovery, Sperre nach Abschluss |
 | `UpdateServiceTest` | 3 | Pruefsummen, Release-Abgleich |
 | `CryptoAndPolicyTest` | 6 | Signer, TOTP, UriPolicy |
+| `SignatureVectorsTest` | 2 | gemeinsame deterministische Vektoren (`docs/test-vectors.json`: Request, Response, Pairing-Nachweis) |
 
-Die Tests laufen gegen **FakeDash** (`tests/Support/FakeDash.php`), nicht gegen ein echtes Dash.
+Die Tests laufen gegen **FakeDash** (`tests/Support/FakeDash.php`), nicht gegen ein echtes Dash oder den Reseller.
 
 ## Offene Punkte und Einschraenkungen
 
 Ehrliche Liste dessen, was fehlt, nicht getestet wurde oder bewusst begrenzt ist:
 
-1. **Kein Test gegen ein echtes Dash.** Die Dash-Seite der Schnittstelle existiert noch nicht. Verhalten, Latenz und Fehlerformen eines realen Dash sind unbestaetigt; die API ist von log_in definiert ([API.md](API.md)). Bis zur Integration ist der End-to-End-Betrieb nicht nachgewiesen.
+1. **Kein Test gegen ein echtes Dash oder den Reseller.** Es gibt nur Contract-Tests mit gemeinsamen Vektoren. Zwei von log_in festgelegte Dash-Schnittstellen sind in der gemeinsamen Masterspezifikation nicht beschrieben und muessen mit der Dash-Implementierung abgeglichen werden: `POST /auth/credentials/verify` (Zugangsdatenpruefung) und das Schema von `GET /users/{id}` ([API.md](API.md) Abschnitt 5). Ebenso das Schema von `/.well-known/vylaris-dash` (inkl. `box_public_key` fuer die Token-Rotation). Bis zur Integration ist der End-to-End-Betrieb nicht nachgewiesen.
 2. **Nicht ausgefuehrt:** Lasttests, Penetrationstest/externes Audit, Tests mit MySQL/MariaDB (Tests laufen nur mit SQLite), Tests auf einem realen Webserver mit Reverse-Proxy, Test des echten GitHub-Update-Pfads (Download/Entpacken/Migration/Rollback wurde nur in Teilen - Pruefsumme, Release-Abgleich - automatisiert getestet), manuelle Browser-Tests der Oberflaeche und Barrierefreiheit.
 3. **Release-Signatur nicht aktiv** (`RELEASE_PUBLIC_KEY` leer): ein kompromittiertes GitHub-Konto koennte ein manipuliertes Release samt passender `SHA256SUMS` ausliefern. Siehe [UPDATES.md](UPDATES.md).
 4. **Update ersetzt nur Dateien, loescht keine entfallenen.** Alte Dateien frueherer Versionen bleiben liegen. Datenbank-Rollback ist manuell (Backup).
@@ -60,3 +65,7 @@ Ehrliche Liste dessen, was fehlt, nicht getestet wurde oder bewusst begrenzt ist
 13. **Rate-Limits liegen im Cache** (Standard: Datenbank). Hinter Proxy muss `TRUSTED_PROXIES` korrekt gesetzt sein, sonst gilt die Proxy-IP als Client-IP.
 14. **Mehrknotenbetrieb** nicht getestet.
 15. **Sprache:** Oberflaeche und Dokumentation nur auf Deutsch.
+16. **Rotation der Ed25519-Signaturschluessel zwischen Dash und log_in** ist nicht als eigener Online-Vorgang implementiert (nur Token-Rotation und OIDC-Schluesselrotation). Ein Tausch erfolgt ueber Recovery-Link und erneuten Bootstrap.
+17. **Service-Token laufen nach 90 Tagen ab.** Rotiert Dash nicht rechtzeitig, ist die Verwaltungs-API gesperrt, bis ein Recovery-Link den Bootstrap wiederholt.
+18. **SSRF/DNS:** Das Festnageln der Zieladresse gilt fuer die Verbindung zu Dash; die `base_url` von Tools wird nur formal und auf private IP-Literale geprueft (log_in verbindet sich nie zu Tools, Hostnamen werden nicht aufgeloest).
+19. **OpenAPI-Datei** wurde syntaktisch (YAML) geprueft, aber nicht mit einem OpenAPI-Validator oder Codegenerator getestet.

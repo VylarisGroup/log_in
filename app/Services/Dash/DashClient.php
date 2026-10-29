@@ -3,7 +3,9 @@
 namespace App\Services\Dash;
 
 use App\Models\Setting;
+use App\Services\Vylaris\ServiceTokens;
 use App\Services\Vylaris\Signer;
+use App\Services\Vylaris\SsrfGuard;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
@@ -16,7 +18,10 @@ use Illuminate\Support\Facades\Http;
  */
 class DashClient
 {
-    private const PREFIX = '/api/vylaris/v1';
+    private function prefix(): string
+    {
+        return (string) config('vylaris.api_prefix');
+    }
 
     public function isConfigured(): bool
     {
@@ -32,19 +37,22 @@ class DashClient
     public function discover(string $baseUrl): array
     {
         $baseUrl = rtrim($baseUrl, '/');
-        $this->assertSafeUrl($baseUrl);
-        $res = $this->http()->get($baseUrl.self::PREFIX.'/discovery');
+        $res = $this->http($baseUrl)->get($baseUrl.'/.well-known/vylaris-dash');
         if (! $res->ok()) {
             throw new DashUnavailableException('Dash-Discovery lieferte HTTP '.$res->status());
         }
         $d = $res->json();
+        $d = is_array($d) && is_array($d['data'] ?? null) ? $d['data'] : $d; // Antwortvertrag: {"data": {...}}
         foreach (['api_version', 'installation_id', 'public_key', 'name'] as $k) {
             if (! is_array($d) || ! isset($d[$k]) || ! is_string($d[$k])) {
                 throw new DashProtocolException("Discovery-Feld $k fehlt");
             }
         }
-        if ($d['api_version'] !== '1' || strlen(base64_decode($d['public_key'], true) ?: '') !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+        if ($d['api_version'] !== config('vylaris.api_version') || strlen(base64_decode($d['public_key'], true) ?: '') !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
             throw new DashProtocolException('Nicht unterstuetzte API-Version oder ungueltiger Schluessel');
+        }
+        if (isset($d['box_public_key']) && (! is_string($d['box_public_key']) || strlen(base64_decode($d['box_public_key'], true) ?: '') !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES)) {
+            throw new DashProtocolException('Ungueltiger X25519-Schluessel in der Discovery');
         }
 
         return $d;
@@ -53,7 +61,7 @@ class DashClient
     /** @return array<string, mixed> */
     public function health(): array
     {
-        return $this->signed('GET', '/log-in/health');
+        return $this->signed('GET', '/health');
     }
 
     /**
@@ -63,7 +71,7 @@ class DashClient
      */
     public function verifyCredentials(string $identifier, string $password, ?string $mfaCode, ?string $clientIp): array
     {
-        $r = $this->signed('POST', '/log-in/credentials/verify', array_filter([
+        $r = $this->signed('POST', '/auth/credentials/verify', array_filter([
             'identifier' => $identifier,
             'password' => $password,
             'mfa_code' => $mfaCode,
@@ -90,7 +98,7 @@ class DashClient
         if (! $fresh && $ttl > 0 && is_array($c = Cache::get($key))) {
             return DashIdentity::fromArray($c, $sub);
         }
-        $data = $this->signed('GET', '/log-in/users/'.rawurlencode($sub));
+        $data = $this->signed('GET', '/users/'.rawurlencode($sub));
         $identity = DashIdentity::fromArray($data, $sub);
         if ($ttl > 0 && $identity->isActive()) {
             Cache::put($key, $data, $ttl);
@@ -116,15 +124,18 @@ class DashClient
             throw new DashUnavailableException('Dash ist nicht eingerichtet');
         }
         $base = $this->baseUrl();
-        $this->assertSafeUrl($base);
-        $fullPath = self::PREFIX.$path;
+        $fullPath = $this->prefix().$path;
+        $token = app(ServiceTokens::class)->outbound();
+        if ($token === null) {
+            throw new DashUnavailableException('Kein Service-Token fuer Dash vorhanden');
+        }
         $json = $body === null ? '' : json_encode($body, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         $ts = time();
         $nonce = Signer::randomNonce();
         $sig = Signer::sign(Signer::requestCanonical($method, $fullPath, $ts, $nonce, $json), (string) Setting::getSecret('login.sign_secret'));
 
         try {
-            $req = $this->http()->withHeaders([
+            $req = $this->http($base)->withToken($token)->withHeaders([
                 'X-Vylaris-Key-Id' => (string) Setting::get('login.installation_id'),
                 'X-Vylaris-Timestamp' => (string) $ts,
                 'X-Vylaris-Nonce' => $nonce,
@@ -142,25 +153,29 @@ class DashClient
             throw new DashUnavailableException('Dash meldet HTTP '.$res->status());
         }
 
-        $this->verifyResponse($res->status(), (string) $res->body(), $nonce, (string) $res->header('X-Vylaris-Timestamp'), (string) $res->header('X-Vylaris-Signature'));
+        $this->verifyResponse($res->status(), (string) $res->body(), $nonce, (string) $res->header('X-Vylaris-Timestamp'), (string) $res->header('X-Vylaris-Signature'), (string) $res->header('X-Vylaris-Key-Id'));
 
-        if ($res->status() === 404 || $res->status() === 410) {
+        if ($res->status() === 404 || $res->status() === 410) { // resource_not_found
             // Unbekanntes oder geloeschtes Konto: wie "deleted" behandeln, nie als erfolgreich.
             return ['status' => 'deleted', 'sub' => rawurldecode(substr($path, strrpos($path, '/') + 1))];
         }
         if (! $res->successful()) {
-            throw new DashProtocolException('Dash lehnte die Anfrage ab (HTTP '.$res->status().')');
+            $code = is_array($res->json('error')) ? (string) $res->json('error.code') : '';
+            throw new DashProtocolException('Dash lehnte die Anfrage ab (HTTP '.$res->status().($code !== '' ? ', '.$code : '').')');
         }
-        $data = $res->json();
+        $data = $res->json('data');
         if (! is_array($data)) {
-            throw new DashProtocolException('Antwort ist kein JSON-Objekt');
+            throw new DashProtocolException('Antwort enthaelt kein data-Objekt');
         }
 
         return $data;
     }
 
-    private function verifyResponse(int $status, string $body, string $requestNonce, string $ts, string $sig): void
+    private function verifyResponse(int $status, string $body, string $requestNonce, string $ts, string $sig, string $keyId): void
     {
+        if (! hash_equals((string) Setting::get('dash.installation_id'), $keyId)) {
+            throw new DashProtocolException('Antwort stammt nicht von der vertrauten Dash-Installation');
+        }
         if ($ts === '' || $sig === '' || ! ctype_digit($ts)) {
             throw new DashProtocolException('Antwort ohne Signatur');
         }
@@ -173,23 +188,22 @@ class DashClient
         }
     }
 
-    private function assertSafeUrl(string $url): void
+    /** Prueft die Zieladresse (SSRF-Schutz) und nagelt die geprueften IP fuer die Verbindung fest; Redirects sind aus. */
+    private function http(string $url): PendingRequest
     {
-        $p = parse_url($url);
-        $scheme = $p['scheme'] ?? '';
-        if (! isset($p['host']) || isset($p['user']) || isset($p['pass']) || ! in_array($scheme, ['https', 'http'], true)) {
-            throw new DashProtocolException('Ungueltige Dash-URL');
+        try {
+            $t = SsrfGuard::check($url);
+        } catch (\InvalidArgumentException $e) {
+            throw new DashProtocolException('Dash-URL abgelehnt: '.$e->getMessage());
         }
-        if ($scheme === 'http' && ! config('vylaris.dash.allow_http')) {
-            throw new DashProtocolException('Dash-URL muss HTTPS verwenden');
+        $opts = ['verify' => true];
+        if ($t['ip'] !== null && defined('CURLOPT_RESOLVE')) {
+            $opts['curl'] = [CURLOPT_RESOLVE => [$t['host'].':'.$t['port'].':'.$t['ip']]];
         }
-    }
 
-    private function http(): PendingRequest
-    {
         return Http::timeout((int) config('vylaris.dash.timeout'))
             ->connectTimeout((int) config('vylaris.dash.connect_timeout'))
             ->withoutRedirecting()
-            ->withOptions(['verify' => true]);
+            ->withOptions($opts);
     }
 }

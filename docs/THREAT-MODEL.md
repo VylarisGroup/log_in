@@ -19,7 +19,7 @@ Anmeldeergebnis (wer ist wer), Signaturschluessel, Client-Geheimnisse, Dash-Vert
 
 | # | Bedrohung | Gegenmassnahme | Test |
 |---|---|---|---|
-| T1 | Gefaelschte Dash-Anfragen an die Verwaltungs-API | Ed25519-Signatur, Zeitfenster, Nonce | `DashApiAuthTest` |
+| T1 | Gefaelschte Dash-Anfragen an die Verwaltungs-API | Bearer-Service-Token **und** Ed25519-Signatur, Zeitfenster, Nonce | `DashApiAuthTest`, `MachineContractTest` |
 | T2 | Replay einer mitgeschnittenen Dash-Anfrage | Nonce-Tabelle (180 s) + Zeitstempel | `DashApiAuthTest` |
 | T3 | Gefaelschte Dash-Antwort (Man-in-the-Middle, "alle Benutzer aktiv") | signierte Antworten, an Anfrage-Nonce gebunden; sonst wie Ausfall | `RevocationAndOutageTest` |
 | T4 | Untergeschobener Dash-Schluessel beim Setup | Fingerprint wird ausserhalb des Kanals verglichen und getippt | `SetupBootstrapTest` |
@@ -43,6 +43,11 @@ Anmeldeergebnis (wer ist wer), Signaturschluessel, Client-Geheimnisse, Dash-Vert
 | T22 | Clickjacking, XSS | CSP, X-Frame-Options, ausgegebene Werte maskiert (Blade) | manuell nicht browser-getestet |
 | T23 | Sitzungsfixierung/-diebstahl | Regeneration beim Login, serverseitige Sitzungen, Secure/HttpOnly | `OidcFlowTest` |
 | T24 | Verwechslung von Konten (Dash liefert fremde `sub`) | `sub` der Antwort muss der angefragten entsprechen | `RevocationAndOutageTest` |
+| T26 | Gestohlenes Service-Token allein | ohne Signaturschluessel wertlos (`invalid_signature`); Token nur als Hash gespeichert, Ablauf, Rotation, Widerruf | `MachineContractTest` |
+| T27 | OIDC-/Tool-Token als Maschinen-Token missbraucht | getrennte Token-Kategorien, Hash-Lookup nur in `service_tokens` | `MachineContractTest` |
+| T28 | SSRF ueber Dash-URL oder Tool-`base_url` (interne Ziele, DNS-Rebinding, Redirects) | `SsrfGuard`: HTTPS, Adresspruefung, festgenagelte IP, keine Redirects; Lockerung nie in Produktion | `MachineContractTest` |
+| T29 | Doppelte Ausfuehrung durch Wiederholung | `Idempotency-Key`, 24 h | `MachineContractTest` |
+| T30 | Pairing ohne ausdrueckliche Freigabe oder ausserhalb des Fensters | Fenster Pflicht, `approved_scopes` Pflicht, Nachweis an genehmigte Scopes gebunden | `PairingTest` |
 | T25 | DoS | Rate-Limits, Zeitlimits, kleine Antworten; kein Schutz gegen volumetrische Angriffe | nicht getestet |
 
 ## Restrisiken

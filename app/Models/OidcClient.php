@@ -55,7 +55,9 @@ class OidcClient extends Model
         return [
             'client_id' => $this->client_id,
             'installation_id' => $this->installation_id,
+            'tool_id' => $this->tool_id,
             'name' => $this->name,
+            'base_url' => $this->base_url,
             'domain' => $this->domain,
             'version' => $this->version,
             'status' => $this->status,

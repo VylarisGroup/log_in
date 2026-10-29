@@ -29,6 +29,8 @@ In `.env` anpassen:
 | `SESSION_SECURE_COOKIE=true` | Cookies nur ueber HTTPS |
 | `TRUSTED_PROXIES` | optional, nur wenn ein Reverse-Proxy davor steht (IP/CIDR-Liste oder `*` nur bei vollstaendig kontrolliertem Proxy) |
 | `DASH_TIMEOUT`, `DASH_CONNECT_TIMEOUT`, `DASH_CLAIMS_CACHE_TTL` | Dash-Aufrufe (Standard 5 s / 3 s / 60 s) |
+| `SERVICE_TOKEN_TTL_DAYS` | Gueltigkeit der Service-Token (Standard 90) |
+| `VYLARIS_SSRF_ENFORCE`, `VYLARIS_ALLOW_PRIVATE_TARGETS`, `DASH_ALLOW_HTTP` | SSRF-Lockerungen nur fuer lokale Entwicklung (Standard: strikt). In Produktion wirkungslos |
 
 ```bash
 php artisan key:generate         # APP_KEY: SICHERN! Ohne ihn sind Schluessel und Backups unlesbar

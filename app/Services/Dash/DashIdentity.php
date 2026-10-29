@@ -36,7 +36,7 @@ final class DashIdentity
      */
     public static function fromArray(array $d, string $expectedSub): self
     {
-        $sub = $d['sub'] ?? null;
+        $sub = $d['sub'] ?? $d['id'] ?? null; // Dash-Benutzerressource: id (oder sub)
         if (! is_string($sub) || $sub === '' || strlen($sub) > 128 || ! hash_equals($expectedSub, $sub)) {
             throw new DashProtocolException('Identitaet passt nicht zur angefragten Subject-ID');
         }

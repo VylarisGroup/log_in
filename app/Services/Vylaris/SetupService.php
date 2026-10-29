@@ -148,6 +148,7 @@ class SetupService
         Setting::put('dash.installation_id', $d['installation_id']);
         Setting::put('dash.public_key', $d['public_key']);
         Setting::put('dash.name', (string) $d['name']);
+        isset($d['box_public_key']) ? Setting::put('dash.box_public_key', $d['box_public_key']) : Setting::forget('dash.box_public_key');
         Setting::put('setup.dash_done', '1');
         Setting::forget('setup.test_ok');
         Audit::log('setup.dash_trusted', 'setup', $d['installation_id'], ['fingerprint' => $d['fingerprint']]);
@@ -188,8 +189,9 @@ class SetupService
             ]);
         });
 
+        [$inboundToken, $outboundToken] = app(ServiceTokens::class)->bootstrap((string) Setting::get('dash.installation_id'));
         $bundle = [
-            'schema' => 'vylaris-login-bootstrap/1',
+            'schema' => 'vylaris-login-bootstrap/2',
             'issuer' => config('vylaris.issuer'),
             'discovery_url' => config('vylaris.issuer').'/.well-known/openid-configuration',
             'client_id' => $client->client_id,
@@ -201,7 +203,14 @@ class SetupService
             'log_in_installation_id' => Setting::get('login.installation_id'),
             'log_in_public_key' => Setting::get('login.sign_public'),
             'log_in_public_key_fingerprint' => Signer::fingerprint((string) Setting::get('login.sign_public')),
-            'log_in_api_base' => config('vylaris.issuer').'/api/dash/v1',
+            'api_version' => config('vylaris.api_version'),
+            'api_base' => config('vylaris.issuer').config('vylaris.api_prefix'),
+            'discovery_url_vylaris' => config('vylaris.issuer').'/.well-known/vylaris-login',
+            // Service-API-Token (Bearer). Der Betreiber uebergibt das Bundle einmalig; danach nur noch Rotation per API.
+            'service_token' => $inboundToken,              // Dash -> log_in
+            'login_to_dash_token' => $outboundToken,       // log_in -> Dash (Dash speichert nur den SHA-256-Hash)
+            'service_token_scopes' => array_keys(ServiceTokens::SCOPES),
+            'service_token_expires_at' => now()->addDays((int) config('vylaris.service_token.ttl_days'))->toIso8601String(),
             'created_at' => now()->toIso8601String(),
         ];
         File::ensureDirectoryExists(dirname($this->bundlePath()));

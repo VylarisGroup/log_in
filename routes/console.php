@@ -3,6 +3,7 @@
 use App\Models\Setting;
 use App\Services\Oidc\KeyManager;
 use App\Services\Oidc\SsoSessions;
+use App\Services\Vylaris\ServiceTokens;
 use App\Services\Vylaris\SetupService;
 use App\Services\Vylaris\UpdateService;
 use Illuminate\Support\Facades\Artisan;
@@ -40,6 +41,8 @@ Artisan::command('login:maintenance', function (KeyManager $keys, SsoSessions $s
     DB::table('pairings')->where('state', 'active')->whereNull('credentials_acked_at')->where('confirmed_at', '<', now()->subHour())->update(['sealed_credentials' => null]);
     DB::table('bootstrap_admins')->whereNull('disabled_at')->where('expires_at', '<', now())->update(['disabled_at' => now(), 'disabled_reason' => 'expired']);
     DB::table('audit_logs')->where('created_at', '<', now()->subDays(180))->delete();
+    DB::table('idempotency_keys')->where('expires_at', '<', now())->delete();
+    DB::table('service_tokens')->where('expires_at', '<', now()->subDays(30))->delete();
     $this->info('Wartung abgeschlossen.');
 })->purpose('Raeumt abgelaufene Sitzungen, Tokens, Nonces, Pairings und Setup-Admins auf (per Cron alle 5 Minuten)');
 
@@ -59,7 +62,7 @@ Artisan::command('login:backup {--keep=14}', function () {
     $dir = storage_path('backups');
     File::ensureDirectoryExists($dir, 0700);
     $data = ['schema' => 'vylaris-login-backup/1', 'created_at' => now()->toIso8601String(), 'version' => config('vylaris.version'), 'tables' => []];
-    foreach (['settings', 'signing_keys', 'oidc_clients', 'sso_sessions', 'oidc_auth_codes', 'oidc_access_tokens', 'oidc_refresh_tokens', 'pairings', 'bootstrap_admins', 'recovery_tokens', 'audit_logs'] as $t) {
+    foreach (['settings', 'signing_keys', 'oidc_clients', 'sso_sessions', 'oidc_auth_codes', 'oidc_access_tokens', 'oidc_refresh_tokens', 'pairings', 'service_tokens', 'bootstrap_admins', 'recovery_tokens', 'audit_logs'] as $t) {
         $data['tables'][$t] = DB::table($t)->get()->map(fn ($r) => (array) $r)->all();
     }
     $file = $dir.'/login-'.now()->format('Ymd-His').'.json.gz';
@@ -110,3 +113,8 @@ Artisan::command('login:update:apply', function (UpdateService $u) {
         return 1;
     }
 })->purpose('Installiert das neueste Release (Backup, Pruefsumme, Migrationen, Rollback bei Fehler)');
+
+Artisan::command('login:dash:revoke-tokens', function (ServiceTokens $tokens) {
+    $n = $tokens->revokeAll();
+    $this->warn("$n Service-Token widerrufen. Dash kann log_in nicht mehr verwalten, bis ueber einen Recovery-Link (login:recovery:issue) neu angebunden wird.");
+})->purpose('Widerruft alle Service-Token der Dash-Installation (Notfall)');

@@ -18,6 +18,7 @@ class Pairing extends Model
         'redirect_uris' => 'array',
         'post_logout_uris' => 'array',
         'scopes' => 'array',
+        'approved_scopes' => 'array',
         'challenge_used' => 'boolean',
         'expires_at' => 'datetime',
         'dash_approved_at' => 'datetime',

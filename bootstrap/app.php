@@ -1,11 +1,18 @@
 <?php
 
 use App\Http\Middleware\SecurityHeaders;
+use App\Support\ApiError;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -13,7 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function () {
-            Route::middleware([])->group(base_path('routes/dash.php'));
+            Route::middleware([])->group(base_path('routes/api.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -28,4 +35,20 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );
+        // Einheitlicher Fehlervertrag fuer /api/vylaris/*: keine Stacktraces, keine internen Details.
+        $exceptions->render(function (Throwable $e, Request $request) {
+            if (! $request->is('api/vylaris/*')) {
+                return null;
+            }
+
+            return match (true) {
+                $e instanceof ThrottleRequestsException => ApiError::response('rate_limited'),
+                $e instanceof ValidationException => ApiError::response('validation_failed', null, $e->errors()),
+                $e instanceof NotFoundHttpException,
+                $e instanceof MethodNotAllowedHttpException => ApiError::response('resource_not_found'),
+                $e instanceof ModelNotFoundException => ApiError::response('resource_not_found'),
+                $e instanceof HttpExceptionInterface && $e->getStatusCode() === 413 => ApiError::response('validation_failed', 'Request body too large'),
+                default => ApiError::response('internal_error'),
+            };
+        });
     })->create();

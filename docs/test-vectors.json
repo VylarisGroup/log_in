@@ -1,0 +1,69 @@
+{
+    "description": "Gemeinsame deterministische Testvektoren der Vylaris-API v1 (Ed25519 ist deterministisch). Alle Projekte muessen exakt diese Signaturen erzeugen und pruefen.",
+    "key": {
+        "seed_derivation": "sha256('vylaris-test-vector-key-A') als Ed25519-Seed (32 Byte)",
+        "public_key": "zYLHRVMuugL2R45zjdsgxNoq0av6P8Tz+5PAeN2Q6P4=",
+        "secret_key": "VsjKrgZu5MTwFS3QW1OGxBOrXuTz3/Rl+Lp61v9XCHPNgsdFUy66AvZHjnON2yDE2irRq/o/xPP7k8B43ZDo/g==",
+        "note": "Nur Testschluessel. Niemals produktiv verwenden."
+    },
+    "vectors": [
+        {
+            "type": "request",
+            "name": "get_health_empty_body",
+            "method": "GET",
+            "path": "/api/vylaris/v1/health",
+            "ts": 1790000000,
+            "nonce": "vector-nonce-000000000001",
+            "body": "",
+            "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "canonical": "VYLARIS-V1\nGET\n/api/vylaris/v1/health\n1790000000\nvector-nonce-000000000001\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "signature": "NikSfhgFYQzI2HmG9+PUWKBzpth+o3ixIJtZzMJUvHflexvPJkbPZt1kW7olcPKqrINe8fxhZoywk/usyAEHDQ=="
+        },
+        {
+            "type": "request",
+            "name": "post_pairing_json_body_with_query",
+            "method": "POST",
+            "path": "/api/vylaris/v1/pairings?dry=1",
+            "ts": 1790000001,
+            "nonce": "vector-nonce-000000000002",
+            "body": "{\"pairing_id\":\"pair-vector-0123456789\",\"scopes\":[\"openid\",\"profile\"],\"name\":\"Tëst/Tool\"}",
+            "body_sha256": "472b2509eb188396c1c7200fabf70ec716cd2daedf51af082b69634b859062e5",
+            "canonical": "VYLARIS-V1\nPOST\n/api/vylaris/v1/pairings?dry=1\n1790000001\nvector-nonce-000000000002\n472b2509eb188396c1c7200fabf70ec716cd2daedf51af082b69634b859062e5",
+            "signature": "BHb0qP72V2npBvbkb2Zq2Jbc920pvXhw4WkdVMyEK8Pnv8dBaERDUA/rAUbYoCAvgcUq/8IE+wxdFaFGh/n/AQ=="
+        },
+        {
+            "type": "response",
+            "name": "response_200",
+            "status": 200,
+            "request_nonce": "vector-nonce-000000000001",
+            "ts": 1790000002,
+            "body": "{\"data\":{\"status\":\"ok\"}}",
+            "body_sha256": "f89450f46611dec9b2d9a82cc858b4f24dfb8fb2d1ca4222d2d392577b7f6643",
+            "canonical": "VYLARIS-V1-RESP\n200\nvector-nonce-000000000001\n1790000002\nf89450f46611dec9b2d9a82cc858b4f24dfb8fb2d1ca4222d2d392577b7f6643",
+            "signature": "QRM6o2A0/RIhfgsel+m8hjSU9kHzepK4nWwrWHwqoigk3hxPgE07ZkvT3FcISXu0z5lte20bCZ2DbZAP7HJPBQ=="
+        },
+        {
+            "type": "pairing_proof",
+            "name": "pairing_proof",
+            "pairing_id": "pair-vector-0123456789",
+            "installation_id": "tool-install-vector-01",
+            "tool_id": "vylaris-tickets",
+            "challenge": "challenge-vector-abcdef",
+            "base_url": "https://tool.example.ch",
+            "redirect_uris": [
+                "https://tool.example.ch/auth/logout-b",
+                "https://tool.example.ch/auth/callback"
+            ],
+            "post_logout_uris": [
+                "https://tool.example.ch/"
+            ],
+            "approved_scopes": [
+                "profile",
+                "openid"
+            ],
+            "rule": "Listen werden vor dem Hashen sortiert (SORT_STRING/Bytereihenfolge); redirect_uris/post_logout_uris mit \"\\n\" verbunden, Scopes mit \" \" verbunden; leere Liste = sha256(\"\")",
+            "canonical": "VYLARIS-PAIR-V1\npair-vector-0123456789\ntool-install-vector-01\nvylaris-tickets\nchallenge-vector-abcdef\nhttps://tool.example.ch\n5d2d439c40a97f796ad10420b8a24888d64c64c0c8b50979ddf4a0456cc09054\ned01eb4d28264f8c1a85c09cc84e4856448e921cb74780afeacf1b86152e95a3\n361b384d4d5840b773db97177861b7203973088b278daf3dd2c78b3e7d8d0e2a",
+            "signature": "RcEZ0rypDbTA6oy3JKdwPuZn/eV4swlyZsFiMiKURMQyXsO0IBKygjulljxJnA2fEe4OnqfABjH1qXEuEMI5AA=="
+        }
+    ]
+}

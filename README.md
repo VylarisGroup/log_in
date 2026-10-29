@@ -40,7 +40,8 @@ Der gefuehrte Assistent legt den Setup-Admin, die Schluessel und die Dash-Anbind
 | UserInfo | `GET\|POST /userinfo` |
 | Widerruf (RFC 7009) | `POST /revoke` |
 | Logout (RP-initiated) | `GET\|POST /logout` |
-| Dash-Verwaltungs-API | `/api/dash/v1/*` (signiert, nur Dash) |
+| Vylaris-Discovery (oeffentlich) | `GET /api/vylaris/v1/discovery`, `GET /.well-known/vylaris-login` |
+| Dash-Verwaltungs-API | `/api/vylaris/v1/*` (Bearer-Service-Token + Ed25519-Signatur, nur Dash) |
 
 ## Dokumentation
 
@@ -49,7 +50,9 @@ Der gefuehrte Assistent legt den Setup-Admin, die Schluessel und die Dash-Anbind
 | [DASH_INTEGRATION.md](DASH_INTEGRATION.md) | Briefing fuer die Code-KI, die Dash baut |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architektur, Betriebsarten, Datenmodell, Ausfallverhalten |
 | [docs/OIDC.md](docs/OIDC.md) | Unterstuetzte/ausgeschlossene Flows, Claims, Schluessel |
-| [docs/API.md](docs/API.md) | Dash-API in beide Richtungen |
+| [docs/API.md](docs/API.md) | Einheitlicher Vylaris-Vertrag v1 (Bearer + Signatur, Fehler, Endpunkte, Token, SSRF) |
+| [docs/openapi.yaml](docs/openapi.yaml) | OpenAPI 3.1 |
+| [docs/test-vectors.json](docs/test-vectors.json) | Gemeinsame deterministische Signatur-Testvektoren |
 | [docs/PAIRING-PROTOCOL.md](docs/PAIRING-PROTOCOL.md) | Pairing-Zustandsautomat und Nachweise |
 | [docs/SECURITY.md](docs/SECURITY.md) | Sicherheitsmassnahmen und bekannte Grenzen |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | Bedrohungen, Gegenmassnahmen, Tests |
@@ -64,4 +67,4 @@ Der gefuehrte Assistent legt den Setup-Admin, die Schluessel und die Dash-Anbind
 php artisan test
 ```
 
-Letzter dokumentierter Lauf (SQLite in-memory, simuliertes Dash, siehe [docs/SECURITY.md](docs/SECURITY.md#tests)): **83 Tests, 83 bestanden**. Nicht abgedeckte Punkte und Einschraenkungen stehen transparent in [docs/SECURITY.md](docs/SECURITY.md#offene-punkte-und-einschraenkungen).
+Letzter dokumentierter Lauf (SQLite in-memory, simuliertes Dash, siehe [docs/SECURITY.md](docs/SECURITY.md#tests)): **103 Tests, 103 bestanden**. Nicht abgedeckte Punkte und Einschraenkungen stehen transparent in [docs/SECURITY.md](docs/SECURITY.md#offene-punkte-und-einschraenkungen).

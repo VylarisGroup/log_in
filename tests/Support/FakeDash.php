@@ -4,6 +4,7 @@ namespace Tests\Support;
 
 use App\Models\OidcClient;
 use App\Models\Setting;
+use App\Services\Vylaris\ServiceTokens;
 use App\Services\Vylaris\Signer;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request as HttpRequest;
@@ -39,17 +40,31 @@ trait FakeDash
 
     protected array $seenNonces = [];
 
+    /** Plaintext des Dash->log_in Service-Tokens (Bearer, den Dash sendet). */
+    protected string $dashToken = '';
+
+    /** Das log_in->Dash Token, das Dash als gueltig akzeptiert. */
+    protected string $dashOutboundToken = '';
+
+    /** @var array{public: string, secret: string} X25519 von Dash (fuer versiegelte Token-Rotation) */
+    protected array $dashBox;
+
     protected function bootFakeDash(): void
     {
         $this->dashKeys = Signer::generateKeypair();
         $this->loginKeys = Signer::generateKeypair();
+        $this->dashBox = Signer::generateBoxKeypair();
         Setting::put('dash.base_url', 'https://dash.test');
         Setting::put('dash.installation_id', 'dash-install-0001');
         Setting::put('dash.public_key', $this->dashKeys['public']);
+        Setting::put('dash.box_public_key', $this->dashBox['public']);
         Setting::put('login.installation_id', 'login-install-0001');
         Setting::put('login.sign_public', $this->loginKeys['public']);
         Setting::putSecret('login.sign_secret', $this->loginKeys['secret']);
         config(['vylaris.issuer' => 'https://login.test', 'app.url' => 'https://login.test']);
+
+        [$this->dashToken] = app(ServiceTokens::class)->bootstrap('dash-install-0001');
+        $this->dashOutboundToken = (string) Setting::getSecret('dash.outbound_token');
 
         $this->dashUsers = [
             'u-alice' => ['sub' => 'u-alice', 'status' => 'active', 'name' => 'Alice', 'email' => 'alice@example.test', 'email_verified' => true, 'tenant_id' => 't-1', 'roles' => ['admin']],
@@ -70,24 +85,27 @@ trait FakeDash
             throw new ConnectionException('dash down');
         }
         $path = parse_url($req->url(), PHP_URL_PATH);
-        if ($path === '/api/vylaris/v1/discovery') {
-            return Http::response(['api_version' => '1', 'installation_id' => 'dash-install-0001', 'name' => 'Dash', 'public_key' => $this->dashKeys['public']], 200);
+        if ($path === '/.well-known/vylaris-dash') {
+            return Http::response(['api_version' => 'v1', 'installation_id' => 'dash-install-0001', 'name' => 'Dash', 'public_key' => $this->dashKeys['public'], 'box_public_key' => $this->dashBox['public']], 200);
         }
         $h = fn (string $n) => $req->header($n)[0] ?? '';
+        if ($h('Authorization') !== 'Bearer '.$this->dashOutboundToken) {
+            return $this->signedDash(401, ['error' => ['code' => 'invalid_token', 'message' => 'Bearer token is invalid']], $h('X-Vylaris-Nonce'));
+        }
         $canon = Signer::requestCanonical($req->method(), $path, (int) $h('X-Vylaris-Timestamp'), $h('X-Vylaris-Nonce'), (string) $req->body());
         if (! Signer::verify($canon, $h('X-Vylaris-Signature'), $this->loginKeys['public'])) {
-            return $this->signedDash(401, ['error' => 'bad_signature'], $h('X-Vylaris-Nonce'));
+            return $this->signedDash(401, ['error' => ['code' => 'invalid_signature', 'message' => 'x']], $h('X-Vylaris-Nonce'));
         }
         if (in_array($h('X-Vylaris-Nonce'), $this->seenNonces, true)) {
-            return $this->signedDash(401, ['error' => 'replay'], $h('X-Vylaris-Nonce'));
+            return $this->signedDash(401, ['error' => ['code' => 'replay_detected', 'message' => 'x']], $h('X-Vylaris-Nonce'));
         }
         $this->seenNonces[] = $h('X-Vylaris-Nonce');
         $n = $h('X-Vylaris-Nonce');
 
-        if ($path === '/api/vylaris/v1/log-in/health') {
+        if ($path === '/api/vylaris/v1/health') {
             return $this->signedDash(200, ['status' => 'ok'], $n);
         }
-        if ($path === '/api/vylaris/v1/log-in/credentials/verify') {
+        if ($path === '/api/vylaris/v1/auth/credentials/verify') {
             $b = json_decode((string) $req->body(), true);
             $c = $this->dashCreds[mb_strtolower($b['identifier'])] ?? null;
             if ($c === null || ! hash_equals($c['password'], $b['password'])) {
@@ -109,7 +127,7 @@ trait FakeDash
 
             return $this->signedDash(200, ['result' => 'ok', 'sub' => $c['sub'], 'amr' => ['pwd']], $n);
         }
-        if (preg_match('#^/api/vylaris/v1/log-in/users/(.+)$#', $path, $m)) {
+        if (preg_match('#^/api/vylaris/v1/users/(.+)$#', $path, $m)) {
             $sub = rawurldecode($m[1]);
             if (! isset($this->dashUsers[$sub])) {
                 return $this->signedDash(404, ['error' => 'not_found'], $n);
@@ -123,6 +141,11 @@ trait FakeDash
 
     protected function signedDash(int $status, array $body, string $requestNonce, ?string $secret = null)
     {
+        if ($status < 300) {
+            $body = ['data' => $body];
+        } elseif (isset($body['error']) && is_string($body['error'])) {
+            $body = ['error' => ['code' => 'resource_not_found', 'message' => $body['error']]];
+        }
         $json = json_encode($body);
         if ($this->dashUnsigned) {
             return Http::response($json, $status, ['Content-Type' => 'application/json']);
@@ -130,7 +153,7 @@ trait FakeDash
         $ts = time();
         $sig = Signer::sign(Signer::responseCanonical($status, $requestNonce, $ts, $json), $secret ?? $this->dashSignSecret ?? $this->dashKeys['secret']);
 
-        return Http::response($json, $status, ['Content-Type' => 'application/json', 'X-Vylaris-Timestamp' => (string) $ts, 'X-Vylaris-Signature' => $sig]);
+        return Http::response($json, $status, ['Content-Type' => 'application/json', 'X-Vylaris-Timestamp' => (string) $ts, 'X-Vylaris-Signature' => $sig, 'X-Vylaris-Key-Id' => 'dash-install-0001']);
     }
 
     /** Signierter Aufruf von Dash gegen log_in (Dash -> log_in). */
@@ -148,6 +171,13 @@ trait FakeDash
             'CONTENT_TYPE' => 'application/json',
             'HTTP_ACCEPT' => 'application/json',
         ];
+        $token = array_key_exists('token', $override) ? $override['token'] : $this->dashToken;
+        if ($token !== null) {
+            $server['HTTP_AUTHORIZATION'] = 'Bearer '.$token;
+        }
+        if (isset($override['idempotency'])) {
+            $server['HTTP_IDEMPOTENCY_KEY'] = $override['idempotency'];
+        }
         $this->lastDashNonce = $nonce;
 
         return $this->call($method, $path, [], [], [], $server, $json);

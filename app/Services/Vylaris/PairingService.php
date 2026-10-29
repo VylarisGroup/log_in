@@ -5,7 +5,9 @@ namespace App\Services\Vylaris;
 use App\Models\Audit;
 use App\Models\OidcClient;
 use App\Models\Pairing;
+use App\Models\Setting;
 use App\Services\Oidc\SsoSessions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -39,13 +41,18 @@ class PairingService
         if (Pairing::query()->where('installation_id', $d['installation_id'])->whereIn('state', ['requested', 'dash_approved'])->where('expires_at', '>', now())->exists()) {
             throw new PairingException('pairing_in_progress', 409);
         }
-        $window = min(max((int) ($d['window_seconds'] ?? config('vylaris.pairing.window')), 30), (int) config('vylaris.pairing.max_window'));
+        $windowEnd = $this->windowEnd();
+        if ($windowEnd === null) {
+            throw new PairingException('window_closed', 409);
+        }
         $p = Pairing::query()->create([
             'id' => $d['pairing_id'],
             'state' => 'requested',
             'installation_id' => $d['installation_id'],
+            'tool_id' => $d['tool_id'],
             'name' => $d['name'],
-            'domain' => strtolower($d['domain']),
+            'base_url' => rtrim($d['base_url'], '/'),
+            'domain' => strtolower((string) parse_url($d['base_url'], PHP_URL_HOST)),
             'version' => $d['version'] ?? null,
             'redirect_uris' => array_values($d['redirect_uris']),
             'post_logout_uris' => array_values($d['post_logout_uris'] ?? []),
@@ -53,11 +60,37 @@ class PairingService
             'tool_sign_public_key' => $d['tool_sign_public_key'],
             'tool_box_public_key' => $d['tool_box_public_key'],
             'challenge' => Signer::randomNonce(),
-            'expires_at' => now()->addSeconds($window),
+            'expires_at' => $windowEnd,
         ]);
         Audit::log('pairing.requested', 'dash', $p->id, ['installation_id' => $p->installation_id, 'domain' => $p->domain]);
 
         return $p;
+    }
+
+    /** Oeffnet das Pairing-Fenster explizit (30-900 s, Standard 300 s). Ein offenes Fenster wird ersetzt. */
+    public function openWindow(?int $seconds = null): Carbon
+    {
+        $seconds = min(max($seconds ?? (int) config('vylaris.pairing.window'), 30), (int) config('vylaris.pairing.max_window'));
+        $end = now()->addSeconds($seconds);
+        Setting::put('pairing.window_until', $end->toIso8601String());
+        Audit::log('pairing.window_opened', 'dash', null, ['seconds' => $seconds]);
+
+        return $end;
+    }
+
+    public function closeWindow(): void
+    {
+        Setting::forget('pairing.window_until');
+        Audit::log('pairing.window_closed', 'dash');
+    }
+
+    /** Ende des offenen Fensters oder null, wenn geschlossen/abgelaufen. */
+    public function windowEnd(): ?Carbon
+    {
+        $v = Setting::get('pairing.window_until');
+        $end = $v === null ? null : Carbon::parse($v);
+
+        return $end !== null && $end->isFuture() ? $end : null;
     }
 
     /** Markiert abgelaufene Pairings (kein Hintergrunddienst noetig: wird bei jedem Zugriff ausgewertet). */
@@ -72,11 +105,11 @@ class PairingService
     }
 
     /** @throws PairingException */
-    public function approve(string $id): Pairing
+    public function approve(string $id, ?array $approvedScopes = null): Pairing
     {
         $this->expireIfNeeded($id);
 
-        return DB::transaction(function () use ($id) {
+        return DB::transaction(function () use ($id, $approvedScopes) {
             $p = $this->lock($id);
             if ($p->state === 'dash_approved') {
                 return $p;
@@ -84,8 +117,13 @@ class PairingService
             if ($p->state !== 'requested') {
                 throw new PairingException('invalid_state:'.$p->state, 409);
             }
-            $p->update(['state' => 'dash_approved', 'dash_approved_at' => now()]);
-            Audit::log('pairing.dash_approved', 'dash', $id);
+            // Angeforderte Berechtigungen sind nicht automatisch genehmigt: Dash nennt die genehmigte Teilmenge ausdruecklich.
+            $approved = array_values(array_unique($approvedScopes ?? []));
+            if ($approved === [] || ! in_array('openid', $approved, true) || array_diff($approved, $p->scopes) !== []) {
+                throw new PairingException('invalid_approved_scopes', 422);
+            }
+            $p->update(['state' => 'dash_approved', 'dash_approved_at' => now(), 'approved_scopes' => $approved]);
+            Audit::log('pairing.dash_approved', 'dash', $id, ['approved_scopes' => $approved]);
 
             return $p->fresh();
         });
@@ -133,7 +171,27 @@ class PairingService
 
     public static function proofMessage(Pairing $p): string
     {
-        return implode("\n", ['VYLARIS-PAIR-V1', $p->id, $p->installation_id, $p->challenge, hash('sha256', json_encode([$p->redirect_uris, $p->scopes]))]);
+        return self::proofCanonical($p->id, $p->installation_id, (string) $p->tool_id, $p->challenge, (string) $p->base_url, $p->redirect_uris, $p->post_logout_uris ?? [], $p->approved_scopes ?? []);
+    }
+
+    /**
+     * Sprachneutrale kanonische Darstellung des Pairing-Nachweises (identisch in allen Vylaris-Projekten):
+     * VYLARIS-PAIR-V1 \n pairing_id \n installation_id \n tool_id \n challenge \n base_url \n
+     * sha256(redirect_uris sortiert, mit \n verbunden) \n sha256(post_logout_uris ebenso) \n sha256(genehmigte Scopes sortiert, mit Leerzeichen verbunden)
+     *
+     * @param  list<string>  $redirectUris
+     * @param  list<string>  $postLogoutUris
+     * @param  list<string>  $approvedScopes
+     */
+    public static function proofCanonical(string $id, string $installationId, string $toolId, string $challenge, string $baseUrl, array $redirectUris, array $postLogoutUris, array $approvedScopes): string
+    {
+        $set = function (array $v, string $glue): string {
+            sort($v, SORT_STRING);
+
+            return hash('sha256', implode($glue, $v));
+        };
+
+        return implode("\n", ['VYLARIS-PAIR-V1', $id, $installationId, $toolId, $challenge, $baseUrl, $set($redirectUris, "\n"), $set($postLogoutUris, "\n"), $set($approvedScopes, ' ')]);
     }
 
     /**
@@ -171,14 +229,16 @@ class PairingService
             $client = OidcClient::query()->create([
                 'client_id' => 'vl_'.Str::lower(bin2hex(random_bytes(12))),
                 'installation_id' => $p->installation_id,
+                'tool_id' => $p->tool_id,
                 'name' => $p->name,
                 'domain' => $p->domain,
+                'base_url' => $p->base_url,
                 'version' => $p->version,
                 'confidential' => true,
                 'secret_hash' => OidcClient::hashSecret($secret),
                 'redirect_uris' => $p->redirect_uris,
                 'post_logout_uris' => $p->post_logout_uris,
-                'scopes' => $p->scopes,
+                'scopes' => $p->approved_scopes,
                 'status' => 'active',
                 'pairing_id' => $p->id,
                 'tool_public_key' => $p->tool_sign_public_key,

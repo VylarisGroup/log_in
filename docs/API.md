@@ -1,128 +1,129 @@
-# Dash-API (beide Richtungen)
+# Vylaris Unified API v1 (log_in-Seite)
 
-Alle Endpunkte sind **Server-zu-Server**. Es gibt keine API-Keys zum Kopieren: die Gegenstellen etablieren beim Setup je einen Ed25519-Schluessel (Fingerprint-Abgleich, siehe [BOOTSTRAP.md](BOOTSTRAP.md)).
+Maschinenlesbar: [openapi.yaml](openapi.yaml) (OpenAPI 3.1). Testvektoren: [test-vectors.json](test-vectors.json). Alle drei Projekte (Dash, log_in, Reseller) verwenden diesen Vertrag; Reseller spricht **nie** mit log_in.
 
-## Signaturverfahren (`VYLARIS-V1`)
+## 1. Pfadraum und Discovery
 
-Header jeder Anfrage:
+Einziger Pfadraum fuer Maschinenkommunikation: **`/api/vylaris/v1`** (zentral in `config('vylaris.api_prefix')`). Die frueheren Pfade `/api/dash/v1/*` und `/log-in/*` existieren nicht mehr (404, getestet in `MachineContractTest`).
+
+| Zweck | Pfad | Signiert |
+|---|---|---|
+| Vylaris-Discovery log_in | `GET /api/vylaris/v1/discovery` (Alias: `GET /.well-known/vylaris-login`) | nein (dokumentierte Ausnahme) |
+| OIDC-Metadaten | `GET /.well-known/openid-configuration`, `GET /.well-known/jwks.json` | nein (Standard) |
+| Dash-Discovery (von Dash bereitzustellen) | `GET <dash>/.well-known/vylaris-dash` | nein |
+
+Discovery-Antwort log_in: `{"data":{"service":"log_in","api_version":"v1","version":"1.1.0","installation_id":"...","name":"Vylaris log_in","public_key":"<Ed25519 b64>","issuer":"https://...","api_base":"https://.../api/vylaris/v1","openid_configuration":"https://.../.well-known/openid-configuration"}}`. Der Schluessel ist erst nach Fingerprint-Bestaetigung vertrauenswuerdig.
+
+## 2. Authentifizierung (jeder Maschinenrequest)
+
+1. **`Authorization: Bearer <Service-Token>`** - Token-Kategorie *Service-API-Token* (Dash <-> log_in). Format `vlst_<43 Zeichen base64url>` (256 Bit). Gespeichert wird nur der SHA-256-Hash. Bindung an Installation, Scopes, Ablauf (Standard 90 Tage), Status. Weder ein OIDC-Access-Token noch ein Tool-API-Token wird akzeptiert (`invalid_token`); ein Service-Token impliziert keine Benutzerrechte.
+2. **Ed25519-Signatur** ueber den kanonischen Request.
 
 | Header | Inhalt |
 |---|---|
-| `X-Vylaris-Key-Id` | Installations-ID des Senders (`login-...` bzw. Dash-Installations-ID) |
-| `X-Vylaris-Timestamp` | Unix-Zeit in Sekunden, Toleranz +-60 s |
-| `X-Vylaris-Nonce` | 16-64 Zeichen `[A-Za-z0-9_-]`, **einmalig** (Server speichert sie 180 s) |
-| `X-Vylaris-Signature` | Base64 der Ed25519-Detached-Signatur ueber den kanonischen String |
-
-Kanonischer String (Zeilen durch `\n`, kein abschliessendes `\n`):
-
-```
-VYLARIS-V1
-<METHODE grossgeschrieben>
-<Pfad inkl. Query, wie gesendet, z. B. /api/dash/v1/users/u-1/revoke>
-<Timestamp>
-<Nonce>
-<SHA-256-Hex des Request-Bodys (leer bei GET: Hash des leeren Strings)>
-```
-
-Antworten sind ebenfalls signiert (Header `X-Vylaris-Timestamp`, `X-Vylaris-Signature`) ueber:
+| `Authorization` | `Bearer <token>` (nie in URL/Query) |
+| `X-Vylaris-Key-Id` | Installations-ID des Senders (muss aktiver, registrierter Installation und dem Token entsprechen) |
+| `X-Vylaris-Timestamp` | Unix-Sekunden, Abweichung <= 60 s |
+| `X-Vylaris-Nonce` | 16-64 Zeichen `[A-Za-z0-9_-]`, pro Installation einmalig, mind. 180 s gespeichert |
+| `X-Vylaris-Signature` | Base64 (Standardalphabet) der Ed25519-Detached-Signatur |
+| `Idempotency-Key` | optional bei schreibenden Operationen, 8-128 Zeichen `[A-Za-z0-9_.:-]` |
 
 ```
-VYLARIS-V1-RESP
-<HTTP-Status>
-<Nonce der Anfrage>
-<Timestamp der Antwort>
-<SHA-256-Hex des Antwort-Bodys>
+VYLARIS-V1\n<METHOD>\n<PATH_AND_QUERY>\n<TIMESTAMP>\n<NONCE>\n<SHA256_HEX(raw body)>
 ```
+(kein abschliessender Zeilenumbruch; Pfad inkl. Query exakt wie uebertragen; Hash des leeren Bodys = SHA-256 der leeren Bytefolge). Ein gueltiges Token **ohne** gueltige Signatur wird abgelehnt (und umgekehrt). Pruefreihenfolge: Bearer vorhanden -> Key-Id -> Token (Hash, Installation, Status, Ablauf) -> Signaturformat -> Zeitfenster -> Signatur -> Nonce (Replay) -> Scope.
 
-Die Bindung an die Anfrage-Nonce verhindert Antwort-Replay. Der Empfaenger **muss** Signatur und Zeitstempel pruefen und bei Fehlern wie bei einem Ausfall reagieren.
+**Antworten** (ausser Discovery) sind signiert: Header `X-Vylaris-Key-Id`, `X-Vylaris-Timestamp`, `X-Vylaris-Signature` ueber
 
-Fehler (HTTP 401): `{"error": "bad_auth_headers" | "timestamp_out_of_range" | "bad_signature" | "replay"}`; 503 `dash_not_configured`, solange das Setup nicht abgeschlossen ist. Alle JSON-Antworten tragen `Cache-Control: no-store`.
-
-Schluessel (Base64): `login.sign_public` / Dash-Schluessel = 32-Byte Ed25519-Public-Key.
-
-## A. log_in -> Dash (von Dash zu implementieren)
-
-Basis: `<dash_base_url>/api/vylaris/v1`. Rechte: genau diese vier Endpunkte, lesend, ohne Schreibzugriff auf Dash-Daten.
-
-### `GET /discovery` (oeffentlich, **nicht** signiert)
-
-```json
-{"api_version":"1","installation_id":"<Dash-Installations-ID>","name":"Dash","public_key":"<Ed25519 Base64>"}
 ```
-
-Der Schluessel ist erst nach Fingerprint-Bestaetigung vertrauenswuerdig. `api_version` muss `"1"` sein.
-
-### `GET /log-in/health` (signiert)
-
-Antwort `200 {"status":"ok"}`.
-
-### `POST /log-in/credentials/verify` (signiert)
-
-```json
-{"identifier":"alice@example.test","password":"...","mfa_code":"123456","client_ip":"203.0.113.5"}
+VYLARIS-V1-RESP\n<STATUS>\n<REQUEST_NONCE>\n<RESPONSE_TIMESTAMP>\n<SHA256_HEX(raw response body)>
 ```
-(`mfa_code`, `client_ip` optional.) Dash prueft Passwort **und** MFA und wendet seine Sperr-/Drosselregeln an.
+Auch Fehlerantworten nach erfolgreicher Authentifizierung (z. B. 403 `forbidden`) sind signiert. Antworten auf Requests mit ungueltiger Authentifizierung (401) sind es nicht - die Gegenstelle kann sie ohnehin nicht dem Request zuordnen.
 
-| `result` | Bedeutung | Weitere Felder |
+## 3. Antwort- und Fehlervertrag
+
+Erfolg: `{"data": {...}}`; Listen: `{"data": [...], "meta": {...}}`. Fehler: `{"error":{"code","message","details"?}}`. Keine Stacktraces, Schluessel- oder Token-Details.
+
+| Code | HTTP | Bedeutung |
 |---|---|---|
-| `ok` | Anmeldung gueltig | `sub` (Pflicht, <=128 Zeichen), `amr` (z. B. `["pwd","otp"]`) |
-| `invalid` | Passwort/Code falsch oder Konto unbekannt | |
-| `mfa_required` | Passwort ok, MFA-Code fehlt | |
-| `locked` / `disabled` | Konto gesperrt/deaktiviert | |
+| `unauthorized` | 401 | Bearer fehlt oder Key-Id passt nicht |
+| `invalid_token` | 401 | Token unbekannt/falsch/ersetzt (u. a. OIDC- oder Tool-Token) |
+| `token_expired` | 401 | Token abgelaufen |
+| `invalid_signature` | 401 | Signatur fehlt/ungueltig, Body manipuliert |
+| `timestamp_out_of_range` | 401 | > 60 s Abweichung |
+| `replay_detected` | 401 | Nonce bereits benutzt |
+| `forbidden` | 403 | Scope fehlt, geschuetzter Client |
+| `pairing_closed` | 409 | Kein Pairing-Fenster offen oder Zustand erlaubt Operation nicht |
+| `pairing_expired` | 410 | Fenster/Pairing abgelaufen |
+| `pairing_denied` | 403 | Pairing abgelehnt |
+| `invalid_pairing_proof` | 422 / 409 | Nachweis falsch oder Challenge schon verbraucht |
+| `installation_revoked` | 403 | Installation/Token widerrufen |
+| `resource_not_found` | 404 | unbekannte Ressource oder Pfad |
+| `duplicate_conflict` | 409 | Installation bereits gepairt, Pairing laeuft, ID-Konflikt |
+| `idempotency_conflict` | 409 | Key mit anderem Request oder noch in Bearbeitung |
+| `validation_failed` | 422 | Eingabe ungueltig (`details`) |
+| `rate_limited` | 429 | Drosselung |
+| `service_unavailable` | 503 | log_in noch nicht eingerichtet |
+| `internal_error` | 500 | unerwarteter Fehler |
 
-log_in zeigt bei `invalid`/`locked`/`disabled` **dieselbe** Meldung. HTTP-Status der Antwort ist 200; 5xx/Timeouts gelten als Ausfall.
+## 4. Endpunkte von log_in (Dash -> log_in)
 
-### `GET /log-in/users/{sub}` (signiert)
+Scopes des Service-Tokens: `service.health`, `pairings.manage`, `clients.read`, `clients.manage`, `keys.manage`, `users.revoke`, `service.rotate`.
 
-```json
-{"sub":"u-alice","status":"active","name":"Alice","email":"alice@example.test","email_verified":true,
- "tenant_id":"t-1","roles":["admin"],"updated_at":"2026-10-29T06:00:00Z"}
-```
+| Methode & Pfad | Scope | Zweck | Erfolg |
+|---|---|---|---|
+| `GET /health` | service.health | Zustand | 200 |
+| `GET /pairing-window` | pairings.manage | Fenster abfragen | 200 |
+| `POST /pairing-window` | pairings.manage | Fenster oeffnen `{"duration_seconds":30-900}` (Standard 300) | 201 |
+| `DELETE /pairing-window` | pairings.manage | Fenster schliessen | 200 |
+| `POST /pairings` | pairings.manage | Pairing anlegen (nur bei offenem Fenster) | 201 / 200 bei Wiederholung |
+| `GET /pairings/{id}` | pairings.manage | Zustand | 200 |
+| `POST /pairings/{id}/approve` | pairings.manage | genehmigen, Body `{"approved_scopes":[...]}` | 200 |
+| `POST /pairings/{id}/reject` | pairings.manage | ablehnen | 200 |
+| `POST /pairings/{id}/cancel` | pairings.manage | abbrechen | 200 |
+| `POST /pairings/{id}/confirm` | pairings.manage | Nachweis `{"proof":"<b64>"}`, aktiviert Client | 200 |
+| `POST /pairings/{id}/credentials-ack` | pairings.manage | Empfang bestaetigt | 200 |
+| `GET /clients` | clients.read | Clients (Kacheln), `meta.pending_pairings` | 200 |
+| `GET /clients/{client_id}` | clients.read | ein Client | 200 |
+| `PATCH /clients/{client_id}` | clients.manage | `redirect_uris`, `post_logout_uris`, `scopes`, `version` | 200 |
+| `POST /clients/{client_id}/suspend` `/resume` `/disconnect` `/report-error` `/rotate-secret` | clients.manage | Lebenszyklus | 200 |
+| `GET /keys` | keys.manage | OIDC-Signaturschluessel (`key_id`, ohne private Teile) | 200 |
+| `POST /keys/rotate` | keys.manage | Rotation | 201 |
+| `POST /keys/{key_id}/revoke` | keys.manage | Sofortwiderruf | 200 |
+| `POST /users/{sub}/revoke` | users.revoke | Sitzungen + Tokens widerrufen | 200 `{sub, revoked_sessions}` |
+| `POST /users/{sub}/refresh` | users.revoke | Identitaets-Cache invalidieren | 200 |
+| `POST /service-tokens/rotate` | service.rotate | Service-Token rotieren (siehe 6) | 200 |
 
-Pflicht: `sub` (identisch zur angefragten), `status` in `active|disabled|locked|deleted`. `roles`: Strings gemaess `^[a-z0-9][a-z0-9_.:-]{0,63}$`. `tenant_id` <=128 Zeichen oder `null`. Unbekannte/geloeschte Konten: HTTP 404 oder 410 (wird als `deleted` behandelt) oder `status: deleted`. Jede Abweichung (falsche `sub`, unbekannter `status`, ungueltige Rolle) wird als Protokollfehler abgelehnt.
+Rate-Limit 300/min. Idempotenz: bei gesetztem `Idempotency-Key` wird die Antwort 24 h gespeichert; Wiederholung mit gleichem Body liefert dieselbe Antwort (`Idempotent-Replayed: true`, neu signiert), anderer Body -> `idempotency_conflict`.
 
-Caching in log_in: aktive Konten werden hoechstens `DASH_CLAIMS_CACHE_TTL` Sekunden (Standard 60) gehalten, nicht-aktive nie.
+Der Dash-Client (`is_dash`) kann nicht gesperrt oder getrennt werden (`forbidden`, `details.reason = dash_client_protected`).
 
-## B. Dash -> log_in (`/api/dash/v1`, von log_in implementiert)
+## 5. Endpunkte, die Dash bereitstellen muss (log_in -> Dash)
 
-Nur Dash darf diese API nutzen; Reseller und Tools **nie**. Jede Anfrage wird mit dem bestaetigten Dash-Schluessel geprueft.
+Basis `<dash>/api/vylaris/v1`; Bearer = `login_to_dash_token`, `X-Vylaris-Key-Id` = log_in-Installations-ID. Dash signiert seine Antworten (`X-Vylaris-Key-Id` = Dash-Installations-ID).
 
-| Methode & Pfad | Zweck | Erfolg |
+| Methode & Pfad | Quelle | Zweck |
 |---|---|---|
-| `GET /health` | Zustand, aktive `kid` | 200 |
-| `POST /pairings` | Pairing-Anfrage anlegen (idempotent) | 201 neu / 200 bekannt |
-| `GET /pairings/{id}` | Zustand abfragen (Polling alle ~2 s) | 200 |
-| `POST /pairings/{id}/dash-approve` | Dash-Freigabe | 200 |
-| `POST /pairings/{id}/dash-reject` | Ablehnung | 200 |
-| `POST /pairings/{id}/tool-confirm` | Nachweis des Tools, aktiviert Client | 200 |
-| `POST /pairings/{id}/credentials-ack` | Zugangsdaten wurden uebernommen | 200 |
-| `POST /pairings/{id}/cancel` | Abbruch | 200 |
-| `GET /clients` | alle Clients (Kacheln) + offene Pairings | 200 |
-| `GET /clients/{client_id}` | eine Kachel | 200 |
-| `PATCH /clients/{client_id}` | `redirect_uris`, `post_logout_uris`, `scopes`, `version` | 200 |
-| `POST /clients/{client_id}/suspend` | sperren (Tokens widerrufen) | 200 |
-| `POST /clients/{client_id}/resume` | entsperren | 200 |
-| `POST /clients/{client_id}/disconnect` | trennen (Tokens widerrufen, Geheimnis geloescht) | 200 |
-| `POST /clients/{client_id}/report-error` | Status `error` setzen | 200 |
-| `POST /clients/{client_id}/rotate-secret` | neues Geheimnis (versiegelt), altes 10 min gueltig | 200 |
-| `GET /keys` | Signaturschluessel (ohne private Teile) | 200 |
-| `POST /keys/rotate` | Rotation | 201 |
-| `POST /keys/{kid}/revoke` | sofortiger Widerruf | 200 |
-| `POST /users/{sub}/revoke` | Konto gesperrt/geloescht: Sitzungen + Tokens widerrufen; Body optional `{"reason":"..."}` | 200 `{"sub","revoked_sessions"}` |
-| `POST /users/{sub}/refresh` | Rollen/Mandant geaendert: Cache invalidieren | 200 |
+| `GET /.well-known/vylaris-dash` | Masterspezifikation | Discovery (unsigniert), `{"data":{api_version:"v1", installation_id, name, public_key, box_public_key?}}` |
+| `GET /health` | Masterspezifikation | `{"data":{"status":"ok"}}` |
+| `GET /users/{id}` | Masterspezifikation | Identitaet: `{"data":{"id" oder "sub", "status":"active\|disabled\|locked\|deleted", "name", "email", "email_verified", "tenant_id", "roles":[...], "updated_at"}}`; 404/410 = geloescht. Die zurueckgegebene ID muss der angefragten entsprechen |
+| `POST /auth/credentials/verify` | **Ergaenzung dieses Repos** (die Masterliste enthaelt keinen Endpunkt fuer die Zugangsdatenpruefung) | Body `{identifier, password, mfa_code?, client_ip?}` -> `{"data":{"result":"ok\|invalid\|mfa_required\|locked\|disabled", "sub"?, "amr"?}}` |
 
-Fehlercodes: `not_found` (404), `validation_failed` (422, `details`), `invalid_state:<state>` (409), `dash_client_protected` (409), `installation_already_paired` / `pairing_in_progress` / `pairing_conflict` (409), `expired` (410), `proof_invalid` (422), `challenge_used` (409), `rotation_not_supported` (422).
-Der Dash-Client selbst (`is_dash`) kann nicht getrennt oder gesperrt werden.
+Verhalten bei Fehlern: Dash nicht erreichbar, Timeout, 5xx, fehlende/ungueltige Antwortsignatur, falsche `X-Vylaris-Key-Id` der Antwort oder unbekannte Felder -> **kein Login** (fail closed).
 
-Details zu `/pairings/*`: [PAIRING-PROTOCOL.md](PAIRING-PROTOCOL.md). Beispiel-Implementierung beider Richtungen als ausfuehrbare Referenz: `tests/Support/FakeDash.php` und `tests/DashTestCase.php`.
+## 6. Token-Lebenszyklus (Service-API-Token)
 
-### Kachel (`GET /clients`)
+| Phase | Verhalten |
+|---|---|
+| Ausstellung | Beim Bootstrap erzeugt log_in zwei Token: `service_token` (Dash -> log_in; log_in speichert nur den Hash) und `login_to_dash_token` (log_in -> Dash; Dash speichert den Hash, log_in haelt es mit `APP_KEY` verschluesselt). Uebergabe einmalig im Bootstrap-Bundle (0600) |
+| Gueltigkeit | `SERVICE_TOKEN_TTL_DAYS` (Standard 90), Scopes, Installationsbindung |
+| Rotation | `POST /service-tokens/rotate` (Scope `service.rotate`): beide neuen Token kommen als **Sealed Box** an den X25519-Schluessel von Dash (`box_public_key` aus der Discovery) - Klartext nie in der Antwort. Das neue Inbound-Token gilt ab der ersten Nutzung; das alte bleibt noch 10 Minuten (`grace`) gueltig, spaetestens 24 h. Der Wechsel des Outbound-Tokens erfolgt mit dieser ersten Nutzung (= Empfangsbestaetigung) |
+| Widerruf | `php artisan login:dash:revoke-tokens` (Notfall, alle Token) oder Ersatz beim erneuten Bootstrap. Widerrufene Token -> `invalid_token`/`installation_revoked` |
+| Ablauf | `token_expired`; Dash muss vor Ablauf rotieren; sonst Recovery-Link und erneuter Bootstrap |
+| Audit | `service_token.issued/rotated/activated/revoked_all`; Token und Authorization-Header werden nie protokolliert |
 
-```json
-{"clients":[{"client_id":"vl_...","installation_id":"...","name":"Vylaris Tickets","domain":"tickets.example.ch","version":"1.4.0",
-  "status":"active","confidential":true,"redirect_uris":["..."],"post_logout_uris":["..."],"scopes":["openid","vylaris"],
-  "last_error":null,"updated_at":"2026-10-29T06:00:00+00:00"}],
- "pending_pairings":[{"pairing_id":"...","installation_id":"...","name":"...","domain":"...","status":"pending","state":"requested"}]}
-```
+Die Ed25519-Signaturschluessel sind getrennt: Token-Rotation ist **keine** Schluesselrotation. Rotation der Signaturschluessel (Dash <-> log_in) erfordert ein erneutes Setup/Recovery (siehe [BOOTSTRAP.md](BOOTSTRAP.md)); die OIDC-Signaturschluessel (RS256) rotieren ueber `/keys/rotate`.
 
-`status`: `pending` (nur in `pending_pairings`), `active`, `error`, `suspended`, `disconnected`.
+## 7. SSRF-Schutz
+
+Gilt fuer jeden ausgehenden Aufruf an Dash und fuer `base_url` bei Pairing: nur HTTPS, keine Zugangsdaten/Fragmente in der URL, keine Loopback-, privaten, Link-Local-, CGNAT-, Multicast- oder reservierten Adressen, DNS-Aufloesung wird geprueft und fuer die Verbindung festgenagelt (DNS-Rebinding), Redirects sind deaktiviert. Lockerungen (`DASH_ALLOW_HTTP`, `VYLARIS_ALLOW_PRIVATE_TARGETS`, `VYLARIS_SSRF_ENFORCE=false`) wirken **nur ausserhalb der Produktion**; in Produktion werden sie ignoriert und mit `critical` geloggt.
