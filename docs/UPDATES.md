@@ -2,18 +2,16 @@
 
 ## Versionierung und Quelle
 
-Schema **`JJ.BB.CCDD`**, Git-Tag **`vJJ.BB.CCDD`** (z. B. `v26.01.0200`). Einzige Quelle ist die Datei `VERSION` im Hauptordner (`config('vylaris.version')` liest sie).
+Schema **`JJ.BB.CC[x]`**, Git-Tag **`vJJ.BB.CC[x]`** (z. B. `v26.01.02`, Fehlerkorrektur `v26.01.02a`). Einzige Quelle ist die Datei `VERSION` im Hauptordner (`config('vylaris.version')` liest sie).
 
 | Teil | Bedeutung | Bereich |
 |---|---|---|
 | `JJ` | Jahreskuerzel (26, 27, ...) | 2 Stellen |
 | `BB` | Hauptversion: grosse, neue Funktion | 01-99 |
 | `CC` | Nebenversion: kleine Updates | 00-99 |
-| `DD` | Fehlerkorrekturen (Bugfixes) | 00-20 |
+| `x` | Fehlerkorrektur (Bugfix) als Buchstabe, optional | a-t (20 Stueck) |
 
-Ueberlauf: nach `DD` = 20 steigt `CC`, nach `CC` = 99 steigt `BB`. Ein neues Jahr beginnt mit `JJ.01.0000`. Neue Hauptversion setzt `CC` und `DD` auf 00, eine neue Nebenversion setzt `DD` auf 00.
-
-`DD` hat zwei Stellen, damit bis zu 20 Fehlerkorrekturen eindeutig darstellbar sind; `CC` wird nur bis 99 gezaehlt, damit die Zerlegung eindeutig bleibt. Reihenfolge und Vergleich: `App\Support\Version`. Tags ausserhalb des Schemas (z. B. alte `1.x`-Tags) werden vom Update ignoriert; eine Installation mit alter Versionsnummer gilt als aelter als jede Version im neuen Schema.
+Ohne Buchstaben ist es das Release selbst (`26.01.02`), danach folgen `26.01.02a`, `26.01.02b` ... `26.01.02t`. Reihenfolge: `26.01.02` < `26.01.02a` < ... < `26.01.02t` < `26.01.03`. Ueberlauf: nach `t` steigt `CC`, nach `CC` = 99 steigt `BB`. Ein neues Jahr beginnt mit `JJ.01.00`. Eine neue Hauptversion setzt `CC` auf 00, jede neue Haupt- oder Nebenversion hat keinen Buchstaben. Gross-/Kleinschreibung zaehlt (nur Kleinbuchstaben). Reihenfolge und Vergleich: `App\\Support\\Version`. Tags ausserhalb des Schemas (z. B. alte `1.x`-Tags) werden vom Update ignoriert; eine Installation mit alter Versionsnummer gilt als aelter als jede Version im neuen Schema.
 
 Release: `VERSION` anheben, committen, Tag `v<VERSION>` setzen. Der Workflow `.github/workflows/release.yml` bricht ab, wenn Tag und `VERSION` nicht uebereinstimmen oder das Schema verletzt ist, und baut sonst `log_in-<version>.zip` (inkl. `vendor/`) und `SHA256SUMS`. Updates stammen **ausschliesslich** aus den GitHub-Releases von `VylarisGroup/log_in` (fest im Code, nicht konfigurierbar).
 

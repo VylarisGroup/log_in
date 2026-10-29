@@ -67,6 +67,6 @@ return [
     'env_path' => env('VYLARIS_ENV_PATH'),
     // Ohne Cron-Eintrag: faellige Aufgaben (Wartung, Backup) werden hoechstens einmal pro Minute nach einer Antwort ausgefuehrt.
     'pseudo_cron' => (bool) env('PSEUDO_CRON', false),
-    // Einzige Quelle: Datei VERSION im Hauptordner (Schema JJ.BB.CCDD, siehe App\Support\Version)
+    // Einzige Quelle: Datei VERSION im Hauptordner (Schema JJ.BB.CC[x], siehe App\Support\Version)
     'version' => is_file(base_path('VERSION')) ? trim((string) file_get_contents(base_path('VERSION'))) : '0.0.0',
 ];

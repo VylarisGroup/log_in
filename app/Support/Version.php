@@ -3,23 +3,24 @@
 namespace App\Support;
 
 /**
- * Versionsschema JJ.BB.CCDD (Tag: vJJ.BB.CCDD), z. B. v26.01.0200.
+ * Versionsschema JJ.BB.CC[x] (Tag: vJJ.BB.CC[x]), z. B. v26.01.02 und die Fehlerkorrektur v26.01.02a.
  *
  * JJ = Jahreskuerzel, BB = Hauptversion (grosse Neuerung, 01-99), CC = Nebenversion (kleine Updates, 00-99),
- * DD = Fehlerkorrekturen (00-20). Ueberlauf: DD > 20 -> CC erhoehen; CC > 99 -> BB erhoehen.
+ * x = Fehlerkorrektur als Buchstabe a-t (max. 20); ohne Buchstaben ist es das Release selbst.
+ * Ueberlauf: nach t steigt CC; nach CC 99 steigt BB.
  */
 final class Version
 {
-    public const PATTERN = '/^v?(\d{2})\.(\d{2})\.(\d{2})(\d{2})$/';
+    public const PATTERN = '/^v?(\d{2})\.(\d{2})\.(\d{2})([a-t])?$/';
 
-    /** @return array{year: int, major: int, minor: int, fix: int}|null null wenn kein gueltiges Schema */
+    /** @return array{year: int, major: int, minor: int, fix: int}|null fix 0 = Release, 1 = a ... 20 = t; null wenn kein gueltiges Schema */
     public static function parse(string $version): ?array
     {
-        if (! preg_match(self::PATTERN, trim($version), $m) || (int) $m[2] < 1 || (int) $m[4] > 20) {
+        if (! preg_match(self::PATTERN, trim($version), $m) || (int) $m[2] < 1) {
             return null;
         }
 
-        return ['year' => (int) $m[1], 'major' => (int) $m[2], 'minor' => (int) $m[3], 'fix' => (int) $m[4]];
+        return ['year' => (int) $m[1], 'major' => (int) $m[2], 'minor' => (int) $m[3], 'fix' => isset($m[4]) ? ord($m[4]) - 96 : 0];
     }
 
     public static function isValid(string $version): bool

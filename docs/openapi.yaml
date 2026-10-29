@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Vylaris Unified API v1 - log_in
-  version: 26.01.0200
+  version: 26.01.02
   description: |
     Verwaltungsschnittstelle von log_in (Dash -> log_in) sowie die Dash-Endpunkte, die log_in aufruft (log_in -> Dash).
     Gemeinsamer Vertrag aller Vylaris-Projekte. Deutsche Ausfuehrung: docs/API.md.

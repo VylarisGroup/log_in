@@ -29,7 +29,7 @@
 
 ## Tests
 
-Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **116 Tests, 116 bestanden, 825 Assertions**.
+Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **116 Tests, 116 bestanden, 831 Assertions**.
 
 | Datei | Tests | Schwerpunkt |
 |---|---|---|

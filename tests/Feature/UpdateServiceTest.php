@@ -39,27 +39,31 @@ class UpdateServiceTest extends TestCase
 
     public function test_version_scheme_parses_compares_and_rejects_foreign_tags(): void
     {
-        $this->assertSame(['year' => 26, 'major' => 1, 'minor' => 2, 'fix' => 0], Version::parse('v26.01.0200'));
-        $this->assertTrue(Version::compare('26.01.0201', '26.01.0200') > 0);
-        $this->assertTrue(Version::compare('26.02.0000', '26.01.9920') > 0);
-        $this->assertTrue(Version::compare('27.01.0000', '26.99.9920') > 0);
-        $this->assertSame(0, Version::compare('v26.01.0200', '26.01.0200'));
-        foreach (['1.1.0', '26.1.2', '26.00.0000', '26.01.0021', 'v26.01.02', 'abc'] as $bad) {
+        $this->assertSame(['year' => 26, 'major' => 1, 'minor' => 2, 'fix' => 0], Version::parse('v26.01.02'));
+        $this->assertSame(3, Version::parse('26.01.02c')['fix']);
+        $this->assertSame(20, Version::parse('26.01.02t')['fix']);
+        $this->assertTrue(Version::compare('26.01.02a', '26.01.02') > 0);
+        $this->assertTrue(Version::compare('26.01.02b', '26.01.02a') > 0);
+        $this->assertTrue(Version::compare('26.01.03', '26.01.02t') > 0);
+        $this->assertTrue(Version::compare('26.02.00', '26.01.99t') > 0);
+        $this->assertTrue(Version::compare('27.01.00', '26.99.99t') > 0);
+        $this->assertSame(0, Version::compare('v26.01.02', '26.01.02'));
+        foreach (['1.1.0', '26.1.2', '26.00.00', '26.01.02u', '26.01.02A', '26.01.0200', 'v26.01.2', 'abc'] as $bad) {
             $this->assertFalse(Version::isValid($bad), $bad);
         }
-        $this->assertTrue(Version::compare('26.01.0200', '1.1.0') > 0); // alte Tags sind aelter
+        $this->assertTrue(Version::compare('26.01.02', '1.1.0') > 0); // alte Tags sind aelter
         $this->assertTrue(Version::isValid(config('vylaris.version')));
     }
 
     public function test_check_reads_latest_release_from_fixed_repository(): void
     {
         Http::fake(['api.github.com/repos/VylarisGroup/log_in/releases/latest' => Http::response([
-            'tag_name' => 'v99.01.0000',
-            'assets' => [['name' => 'log_in-99.01.0000.zip', 'browser_download_url' => 'https://github.com/x/a.zip'], ['name' => 'SHA256SUMS', 'browser_download_url' => 'https://github.com/x/s']],
+            'tag_name' => 'v99.01.00',
+            'assets' => [['name' => 'log_in-99.01.00.zip', 'browser_download_url' => 'https://github.com/x/a.zip'], ['name' => 'SHA256SUMS', 'browser_download_url' => 'https://github.com/x/s']],
         ])]);
         $i = (new UpdateService)->check();
         $this->assertTrue($i['update_available']);
-        $this->assertSame('99.01.0000', $i['latest']);
+        $this->assertSame('99.01.00', $i['latest']);
         $this->assertSame('https://github.com/x/a.zip', $i['asset_url']);
         Http::assertSent(fn ($r) => str_starts_with($r->url(), 'https://api.github.com/repos/VylarisGroup/log_in/'));
     }
