@@ -114,7 +114,7 @@ class InstallerTest extends DashTestCase
 
     public function test_install_needs_the_setup_token_session(): void
     {
-        $this->post('/setup/install', ['username' => 'x'])->assertForbidden();
+        $this->post('/setup/install', ['username' => 'x'])->assertRedirect('/setup')->assertSessionHas('error');
         $this->get('/setup/bundle')->assertNotFound();
     }
 

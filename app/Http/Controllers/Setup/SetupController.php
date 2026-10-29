@@ -9,10 +9,12 @@ use App\Models\BootstrapAdmin;
 use App\Models\Setting;
 use App\Services\Vylaris\SetupService;
 use App\Services\Vylaris\Totp;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\View\View;
 
@@ -29,6 +31,18 @@ class SetupController extends Controller
         }
 
         return (bool) $s->get('setup_recovery') || $this->maintenanceAdmin($r) !== null;
+    }
+
+    /** Statt einer nackten 403-Seite: zurueck zum Token-Formular mit Erklaerung (Sitzung abgelaufen/verloren). */
+    private function requireSetup(Request $r, bool $notCompleted = false): void
+    {
+        if ($this->allowed($r) && (! $notCompleted || ! $this->setup->isCompleted())) {
+            return;
+        }
+        abort_if($this->setup->isCompleted(), 403); // abgeschlossenes Setup bleibt hart gesperrt
+        Log::warning('setup: Zugriff ohne gueltige Setup-Sitzung', ['path' => $r->path(), 'has_session_cookie' => $r->hasCookie(config('session.cookie'))]);
+
+        throw new HttpResponseException(redirect()->route('setup.index')->with('error', 'Die Setup-Sitzung ist abgelaufen oder wurde nicht gespeichert (Cookies aktiv? Seite ueber HTTPS?). Bitte das Setup-Token erneut eingeben.'));
     }
 
     private function maintenanceAdmin(Request $r): ?BootstrapAdmin
@@ -97,7 +111,7 @@ class SetupController extends Controller
     /** Ein-Klick-Installation: Adresse, Datenbank, Migrationen, Schluessel, Setup-Admin. */
     public function install(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r) && ! $this->setup->isCompleted(), 403);
+        $this->requireSetup($r, true);
         $d = $r->validate([
             'issuer' => 'nullable|string|max:255', 'db_mode' => 'nullable|in:sqlite,mysql',
             'db_host' => 'nullable|string|max:255', 'db_port' => 'nullable|string|max:6', 'db_name' => 'nullable|string|max:64',
@@ -125,7 +139,7 @@ class SetupController extends Controller
 
     public function admin(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r) && ! $this->setup->isCompleted(), 403);
+        $this->requireSetup($r, true);
         $d = $r->validate(['username' => 'required|string|max:40', 'password' => 'required|string|max:200', 'password_confirmation' => 'required|same:password', 'totp_code' => 'required|string|max:10']);
         try {
             $this->setup->createAdmin($d['username'], $d['password'], (string) $r->session()->get('setup_totp'), $d['totp_code']);
@@ -139,7 +153,7 @@ class SetupController extends Controller
 
     public function keys(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r), 403);
+        $this->requireSetup($r);
         $this->setup->generateKeys();
 
         return redirect()->route('setup.index');
@@ -147,7 +161,10 @@ class SetupController extends Controller
 
     public function discover(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r), 403);
+        $this->requireSetup($r);
+        // Auch "dash.example.ch" ohne Schema ist erlaubt (manche Webhoster-Firewalls blockieren URLs in Formularfeldern)
+        $url = trim((string) $r->input('dash_url'));
+        $r->merge(['dash_url' => preg_match('#^[a-z][a-z0-9+.-]*://#i', $url) ? $url : 'https://'.$url]);
         $r->validate(['dash_url' => 'required|url|max:255']);
         try {
             $r->session()->put('setup_discovered', $this->setup->discoverDash((string) $r->input('dash_url')));
@@ -160,7 +177,7 @@ class SetupController extends Controller
 
     public function trust(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r), 403);
+        $this->requireSetup($r);
         $d = $r->session()->get('setup_discovered');
         if (! is_array($d)) {
             return redirect()->route('setup.index');
@@ -184,7 +201,7 @@ class SetupController extends Controller
 
     public function client(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r), 403);
+        $this->requireSetup($r);
         $split = fn (?string $v) => array_values(array_filter(array_map('trim', preg_split('/\R/', (string) $v))));
         try {
             $bundle = $this->setup->registerDash($split($r->input('redirect_uris')), $split($r->input('post_logout_uris')));
@@ -198,7 +215,7 @@ class SetupController extends Controller
 
     public function test(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r), 403);
+        $this->requireSetup($r);
         $res = $this->setup->testConnection();
 
         return redirect()->route('setup.index')->with($res['ok'] ? 'status' : 'error', $res['message']);
@@ -206,7 +223,7 @@ class SetupController extends Controller
 
     public function finish(Request $r): RedirectResponse
     {
-        abort_unless($this->allowed($r) && ! $this->setup->isCompleted(), 403);
+        $this->requireSetup($r, true);
         $ok = $this->setup->finish();
         if (! $ok) {
             return redirect()->route('setup.index')->with('setup_checks', $this->setup->integrityChecks())->with('error', 'Nicht alle Pruefungen bestanden.');

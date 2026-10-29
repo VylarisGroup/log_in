@@ -81,7 +81,7 @@ class SetupBootstrapTest extends DashTestCase
         $this->assertSame('0600', substr(sprintf('%o', fileperms(storage_path('app/setup-token.txt'))), -4));
 
         foreach (['/setup/admin', '/setup/keys', '/setup/dash/discover', '/setup/client', '/setup/test', '/setup/finish'] as $u) {
-            $this->post($u, [])->assertForbidden();
+            $this->post($u, [])->assertRedirect('/setup')->assertSessionHas('error');
         }
         $this->post('/setup/token', ['token' => 'falsch'])->assertSessionHasErrors('token');
     }

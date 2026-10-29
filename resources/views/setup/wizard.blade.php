@@ -47,7 +47,7 @@
 @if($clientDone)<div class="ok">OK - Dash als OIDC-Anwendung registriert.</div>@endif
 @if($registerError)<p class="err">{{ $registerError }}</p>@endif
 <form method="post" action="{{ route('setup.dash.discover') }}">@csrf
-<label>Dash-URL (HTTPS)</label><input name="dash_url" value="{{ old('dash_url', $dashBase) }}" required>
+<label>Dash-Adresse (z. B. dash.example.ch)</label><input name="dash_url" value="{{ old('dash_url', $dashBase ? preg_replace('#^https?://#', '', $dashBase) : '') }}" required>
 <button>Dash suchen</button></form>
 @error('dash')<p class="err">{{ $message }}</p>@enderror
 @if($discovered)

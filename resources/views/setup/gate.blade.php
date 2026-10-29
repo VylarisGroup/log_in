@@ -8,6 +8,7 @@
 <p class="muted">Gib das Setup-Token ein. Du findest es nur auf dem Server in der Datei <code>{{ $tokenPath }}</code>.</p>
 <form method="post" action="{{ route('setup.token') }}">@csrf
 <label for="token">Setup-Token</label><input id="token" name="token" required autocomplete="off">
+@if(session('error'))<p class="err">{{ session('error') }}</p>@endif
 @error('token')<p class="err">{{ $message }}</p>@enderror
 <button>Weiter</button></form>
 @endif
