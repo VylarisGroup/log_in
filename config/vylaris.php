@@ -63,5 +63,9 @@ return [
         'allow_private' => (bool) env('VYLARIS_ALLOW_PRIVATE_TARGETS', false),
     ],
 
+    // Optionaler Pfad der .env (Tests); Standard: base_path('.env').
+    'env_path' => env('VYLARIS_ENV_PATH'),
+    // Ohne Cron-Eintrag: faellige Aufgaben (Wartung, Backup) werden hoechstens einmal pro Minute nach einer Antwort ausgefuehrt.
+    'pseudo_cron' => (bool) env('PSEUDO_CRON', false),
     'version' => '1.1.0',
 ];

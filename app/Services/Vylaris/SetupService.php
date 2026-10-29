@@ -2,6 +2,7 @@
 
 namespace App\Services\Vylaris;
 
+use App\Http\Middleware\EnsureInstalled;
 use App\Models\Audit;
 use App\Models\BootstrapAdmin;
 use App\Models\OidcClient;
@@ -10,6 +11,8 @@ use App\Models\Setting;
 use App\Services\Dash\DashClient;
 use App\Services\Oidc\KeyManager;
 use App\Services\Oidc\TokenVerifier;
+use App\Support\EnvFile;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -83,7 +86,117 @@ class SetupService
             'storage beschreibbar' => ['ok' => $w(storage_path()), 'info' => storage_path()],
             'HTTPS' => ['ok' => str_starts_with(config('vylaris.issuer'), 'https://') || config('vylaris.dash.allow_http'), 'info' => config('vylaris.issuer')],
             'APP_KEY gesetzt' => ['ok' => (bool) config('app.key'), 'info' => ''],
+            '.env beschreibbar' => ['ok' => is_file(EnvFile::path()) ? is_writable(EnvFile::path()) : $w(dirname(EnvFile::path())), 'info' => ''],
+            'bootstrap/cache beschreibbar' => ['ok' => $w(base_path('bootstrap/cache')), 'info' => ''],
+            'database/ beschreibbar (SQLite)' => ['ok' => $w(database_path()), 'info' => ''],
+            'pdo_sqlite oder pdo_mysql' => ['ok' => extension_loaded('pdo_sqlite') || extension_loaded('pdo_mysql'), 'info' => ''],
         ];
+    }
+
+    /**
+     * Ein-Klick-Installation: Issuer, Datenbank (SQLite oder MySQL), Migrationen, Schluessel und Setup-Admin.
+     * Ist die Datenbank bereits eingerichtet, werden nur die fehlenden Teile ergaenzt (wiederholbar).
+     *
+     * @param  array<string, mixed>  $in
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function install(array $in, string $totpSecret): void
+    {
+        $adminDone = Setting::get('setup.admin_done') === '1';
+        if (! $adminDone) {
+            if (mb_strlen((string) $in['password']) < 14) {
+                throw new \InvalidArgumentException('Das Passwort braucht mindestens 14 Zeichen.');
+            }
+            if (! Totp::verify($totpSecret, (string) $in['totp_code'])) {
+                throw new \InvalidArgumentException('Der TOTP-Code ist ungueltig.');
+            }
+        }
+        $this->applyIssuer($in['issuer'] ?? null);
+        if (! EnsureInstalled::installed()) {
+            $this->prepareDatabase($in);
+        }
+        if (! $adminDone) {
+            $this->createAdmin((string) $in['username'], (string) $in['password'], $totpSecret, (string) $in['totp_code']);
+        }
+        $this->generateKeys();
+        Audit::log('setup.installed', 'setup');
+    }
+
+    private function applyIssuer(?string $issuer): void
+    {
+        $issuer = rtrim(trim((string) $issuer), '/');
+        if ($issuer === '' || $issuer === config('vylaris.issuer')) {
+            return;
+        }
+        if (! filter_var($issuer, FILTER_VALIDATE_URL) || ! preg_match('#^https?://[^/]+$#', $issuer)) {
+            throw new \InvalidArgumentException('Die Adresse muss die Form https://host haben (ohne Pfad).');
+        }
+        if (! str_starts_with($issuer, 'https://') && ! config('vylaris.dash.allow_http')) {
+            throw new \InvalidArgumentException('Die Adresse muss HTTPS verwenden.');
+        }
+        if (Setting::get('login.installation_id') !== null) {
+            throw new \InvalidArgumentException('Der Issuer ist Teil aller Tokens und kann nach der Installation nicht mehr geaendert werden.');
+        }
+        EnvFile::set(['APP_URL' => $issuer, 'OIDC_ISSUER' => $issuer]);
+        config(['vylaris.issuer' => $issuer, 'app.url' => $issuer]);
+    }
+
+    /** @param  array<string, mixed>  $in */
+    private function prepareDatabase(array $in): void
+    {
+        if (($in['db_mode'] ?? 'sqlite') === 'mysql') {
+            foreach (['db_host' => 'Host', 'db_name' => 'Datenbankname', 'db_user' => 'Benutzer'] as $k => $label) {
+                if (trim((string) ($in[$k] ?? '')) === '') {
+                    throw new \InvalidArgumentException("Datenbank: $label fehlt.");
+                }
+            }
+            $conn = [
+                'host' => trim($in['db_host']), 'port' => trim((string) ($in['db_port'] ?? '')) ?: '3306',
+                'database' => trim($in['db_name']), 'username' => trim($in['db_user']), 'password' => (string) ($in['db_password'] ?? ''),
+            ];
+            config(['database.default' => 'mysql'] + collect($conn)->mapWithKeys(fn ($v, $k) => ["database.connections.mysql.$k" => $v])->all());
+            DB::purge('mysql');
+            try {
+                DB::connection('mysql')->getPdo();
+            } catch (\Throwable) {
+                throw new \InvalidArgumentException('Datenbankverbindung fehlgeschlagen. Host, Name, Benutzer und Passwort pruefen.');
+            }
+            $env = ['DB_CONNECTION' => 'mysql', 'DB_HOST' => $conn['host'], 'DB_PORT' => $conn['port'], 'DB_DATABASE' => $conn['database'], 'DB_USERNAME' => $conn['username'], 'DB_PASSWORD' => $conn['password']];
+        } else {
+            $path = (string) (config('database.connections.sqlite.database') ?: database_path('database.sqlite'));
+            if ($path !== ':memory:' && ! is_file($path) && @touch($path) === false) {
+                throw new \InvalidArgumentException('Die SQLite-Datei konnte nicht angelegt werden (database/ beschreibbar machen).');
+            }
+            config(['database.default' => 'sqlite']);
+            $env = ['DB_CONNECTION' => 'sqlite', 'DB_DATABASE' => $path];
+        }
+        DB::purge();
+        try {
+            Artisan::call('migrate', ['--force' => true]);
+        } catch (\Throwable $e) {
+            report($e);
+            throw new \InvalidArgumentException('Die Datenbank konnte nicht eingerichtet werden: '.class_basename($e));
+        }
+        EnsureInstalled::reset();
+        if (! EnsureInstalled::installed()) {
+            throw new \InvalidArgumentException('Die Datenbank wurde nicht eingerichtet.');
+        }
+        EnvFile::set($env);
+    }
+
+    /**
+     * Standard-Redirect-URIs von Dash (Hinweise aus der Discovery haben Vorrang).
+     *
+     * @param  array<string, mixed>  $discovered
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    public function defaultDashUris(array $discovered): array
+    {
+        $base = rtrim((string) $discovered['base_url'], '/');
+        $pick = fn (string $k, array $fallback) => is_array($discovered[$k] ?? null) && $discovered[$k] !== [] ? array_values(array_filter($discovered[$k], 'is_string')) : $fallback;
+
+        return [$pick('oidc_redirect_uris', [$base.'/auth/callback']), $pick('oidc_post_logout_uris', [$base.'/'])];
     }
 
     /** @throws \InvalidArgumentException */
@@ -137,7 +250,7 @@ class SetupService
     }
 
     /** Vertrauen erst nach manueller Bestaetigung des Fingerprints (Out-of-band-Abgleich mit Dash). */
-    public function trustDash(string $url, string $typedFingerprint): void
+    public function trustDash(string $url, string $typedFingerprint): array
     {
         $d = $this->discoverDash($url);
         $norm = fn (string $s) => strtoupper(preg_replace('/[^A-Fa-f0-9]/', '', $s));
@@ -152,6 +265,8 @@ class SetupService
         Setting::put('setup.dash_done', '1');
         Setting::forget('setup.test_ok');
         Audit::log('setup.dash_trusted', 'setup', $d['installation_id'], ['fingerprint' => $d['fingerprint']]);
+
+        return $d;
     }
 
     /**
@@ -267,6 +382,9 @@ class SetupService
     /** @return bool true wenn alle Pruefungen bestanden und das Setup abgeschlossen wurde */
     public function finish(): bool
     {
+        if (Setting::get('setup.test_ok') !== '1' && Setting::get('setup.client_done') === '1') {
+            $this->testConnection();
+        }
         foreach ($this->integrityChecks() as $c) {
             if (! $c['ok']) {
                 return false;

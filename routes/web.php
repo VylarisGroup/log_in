@@ -28,6 +28,8 @@ Route::prefix('setup')->middleware('throttle:60,1')->group(function () {
     Route::get('/login', [SetupController::class, 'loginForm'])->name('setup.login');
     Route::post('/login', [SetupController::class, 'login'])->name('setup.login.store');
     Route::get('/recover/{token}', [SetupController::class, 'recover'])->name('setup.recover');
+    Route::post('/install', [SetupController::class, 'install'])->name('setup.install');
+    Route::get('/bundle', [SetupController::class, 'bundle'])->name('setup.bundle');
     Route::post('/admin', [SetupController::class, 'admin'])->name('setup.admin');
     Route::post('/keys', [SetupController::class, 'keys'])->name('setup.keys');
     Route::post('/dash/discover', [SetupController::class, 'discover'])->name('setup.dash.discover');

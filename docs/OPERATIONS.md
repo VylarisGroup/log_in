@@ -1,6 +1,8 @@
 # Betrieb
 
-## Zeitplaene (Cron `schedule:run`, jede Minute)
+## Zeitplaene (Cron `schedule:run`, jede Minute, oder `PSEUDO_CRON=true`)
+
+Ohne Cron-Eintrag fuehrt `PSEUDO_CRON=true` (Standard der Web-Installation) die faelligen Aufgaben nach Seitenaufrufen aus, hoechstens einmal pro Minute. Bei echtem Cron `PSEUDO_CRON=false` setzen.
 
 | Aufgabe | Takt | Inhalt |
 |---|---|---|

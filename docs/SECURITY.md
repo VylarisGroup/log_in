@@ -29,7 +29,7 @@
 
 ## Tests
 
-Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **103 Tests, 103 bestanden, 733 Assertions**.
+Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **115 Tests, 115 bestanden, 812 Assertions**.
 
 | Datei | Tests | Schwerpunkt |
 |---|---|---|
@@ -40,6 +40,7 @@ Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **103 Tes
 | `PairingTest` | 18 | Zustandsautomat, offenes Fenster, ausdrueckliche Genehmigung, Nachweisbindung, URI-/base_url-Policy, Konflikte, Ablauf, Versiegelung, Rotation, Trennen |
 | `KeyRotationTest` | 5 | Rotation, Ueberlappung, Widerruf, JWKS |
 | `SetupBootstrapTest` | 11 | Token, Admin/TOTP, Fingerprint, Bundle inkl. Service-Token, Aktivierung, Recovery, Sperre nach Abschluss |
+| `InstallerTest` | 12 | `.env`-Provisionierung, Web-Installation (Admin, Schluessel, Issuer), Ablehnung schwacher Eingaben, automatische Dash-Registrierung, Bundle-Download, Abschluss mit Verbindungstest, tolerante Discovery, Setup-Weiterleitung ohne Datenbank, Pseudo-Cron |
 | `UpdateServiceTest` | 3 | Pruefsummen, Release-Abgleich |
 | `CryptoAndPolicyTest` | 6 | Signer, TOTP, UriPolicy |
 | `SignatureVectorsTest` | 2 | gemeinsame deterministische Vektoren (`docs/test-vectors.json`: Request, Response, Pairing-Nachweis) |
@@ -69,3 +70,8 @@ Ehrliche Liste dessen, was fehlt, nicht getestet wurde oder bewusst begrenzt ist
 17. **Service-Token laufen nach 90 Tagen ab.** Rotiert Dash nicht rechtzeitig, ist die Verwaltungs-API gesperrt, bis ein Recovery-Link den Bootstrap wiederholt.
 18. **SSRF/DNS:** Das Festnageln der Zieladresse gilt fuer die Verbindung zu Dash; die `base_url` von Tools wird nur formal und auf private IP-Literale geprueft (log_in verbindet sich nie zu Tools, Hostnamen werden nicht aufgeloest).
 19. **OpenAPI-Datei** wurde syntaktisch (YAML) geprueft, aber nicht mit einem OpenAPI-Validator oder Codegenerator getestet.
+20. **Web-Installer nicht auf echtem Hosting getestet:** SQLite- und MySQL-Einrichtung (inkl. Migration ueber den Browser) sowie das Schreiben der `.env` sind nur mit simulierter Datenbank bzw. Hilfsfunktionen getestet; der MySQL-Pfad wurde nie gegen einen echten Server ausgefuehrt.
+21. **Erster `/setup`-Aufruf ist offen:** Wer die Adresse vor dem Betreiber aufruft, loest die `.env`-Erzeugung aus, braucht fuer jeden weiteren Schritt aber das Setup-Token (nur per Dateizugriff lesbar). Die URL deshalb unmittelbar nach dem Entpacken aufrufen und das Setup abschliessen. Die erzeugte `.env` leitet die Adresse aus dem `Host`-Header ab und ist im Assistenten korrigierbar, bevor Schluessel entstehen.
+22. **Pseudo-Cron** laeuft nur bei Seitenaufrufen und nach der Antwort im selben PHP-Prozess; bei sehr wenig Verkehr verzoegern sich Wartung und Backup.
+23. **Dash-Discovery:** log_in akzeptiert Schluessel aus `public_key` oder `keys[]` und leitet die API-Version aus `api_base` ab, verlangt aber weiterhin die einheitliche API v1 (`/api/vylaris/v1`, Bearer-Service-Token, Signaturen). Ein Dash mit dem alten Protokoll kann nicht angebunden werden.
+24. **Back-Channel-Logout** (von Dash angeboten) ist in log_in nicht umgesetzt.

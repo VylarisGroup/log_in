@@ -162,7 +162,9 @@ class SetupBootstrapTest extends DashTestCase
         $this->post('/setup/dash/discover', ['dash_url' => 'https://dash.test']);
         $this->post('/setup/dash/trust', ['fingerprint' => Signer::fingerprint($this->dashKeys['public'])]);
         $this->post('/setup/client', ['redirect_uris' => 'https://evil.test/cb'])->assertSessionHasErrors('client');
-        $this->assertSame(0, OidcClient::query()->count());
+        // die automatische Registrierung nach dem Vertrauen nutzt nur Dash-URIs; die fremde URI wurde abgelehnt
+        $client = OidcClient::query()->sole();
+        $this->assertSame(['https://dash.test/auth/callback'], $client->redirect_uris);
     }
 
     public function test_admin_needs_strong_password_valid_totp_and_is_single(): void

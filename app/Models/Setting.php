@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Http\Middleware\EnsureInstalled;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Crypt;
 
@@ -17,6 +18,10 @@ class Setting extends Model
 
     public static function get(string $key, ?string $default = null): ?string
     {
+        if (! EnsureInstalled::installed()) {
+            return $default;
+        }
+
         return static::query()->find($key)?->value ?? $default;
     }
 

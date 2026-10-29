@@ -102,6 +102,10 @@ final class SsrfGuard
             $ips[] = $r['ip'] ?? $r['ipv6'] ?? null;
         }
 
+        if ($ips === [] && function_exists('gethostbynamel')) {
+            $ips = @gethostbynamel($host) ?: []; // Fallback fuer Hoster ohne dns_get_record
+        }
+
         return array_values(array_filter($ips));
     }
 }

@@ -26,6 +26,9 @@ trait FakeDash
 
     protected bool $dashDown = false;
 
+    /** @var array<string, mixed>|null ersetzt das Discovery-Dokument (fuer Kompatibilitaetstests) */
+    protected ?array $dashDiscoveryOverride = null;
+
     protected ?string $dashSignSecret = null;
 
     protected bool $dashUnsigned = false;
@@ -86,6 +89,10 @@ trait FakeDash
         }
         $path = parse_url($req->url(), PHP_URL_PATH);
         if ($path === '/.well-known/vylaris-dash') {
+            if ($this->dashDiscoveryOverride !== null) {
+                return Http::response($this->dashDiscoveryOverride, 200);
+            }
+
             return Http::response(['api_version' => 'v1', 'installation_id' => 'dash-install-0001', 'name' => 'Dash', 'public_key' => $this->dashKeys['public'], 'box_public_key' => $this->dashBox['public']], 200);
         }
         $h = fn (string $n) => $req->header($n)[0] ?? '';

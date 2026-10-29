@@ -1,0 +1,12 @@
+# Fuer Hoster, bei denen der Webroot nicht auf public/ zeigen kann: alles nach public/ umleiten.
+# Empfohlen bleibt, den Webroot direkt auf public/ zu setzen.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^public/ - [L]
+    RewriteRule ^(\.(?!well-known)|storage/|vendor/|database/|bootstrap/|config/|app/|routes/|tests/|resources/views/)  - [F,L]
+    RewriteRule ^$ public/ [L]
+    RewriteRule (.*) public/$1 [L]
+</IfModule>
+<FilesMatch "^\.(env|git)|\.(sqlite|log|md|lock)$">
+    Require all denied
+</FilesMatch>

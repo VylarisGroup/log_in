@@ -142,7 +142,7 @@ Vertraulicher Client: Authorization Code + **PKCE S256**, `state` und `nonce` Pf
 | Pruefung | Erwartung |
 |---|---|
 | `docs/test-vectors.json` | alle Request-/Response-/Pairing-Vektoren exakt reproduziert |
-| Discovery + Fingerprint | log_in-Setup akzeptiert |
+| Discovery + Fingerprint | log_in-Setup akzeptiert. log_in liest `public_key` oder den ersten aktiven Ed25519-Eintrag aus `keys[]` (base64/base64url), `api_version` (`v1`/`1` oder aus `api_base`), optional `box_public_key` sowie die Hinweise `oidc_redirect_uris` und `oidc_post_logout_uris` fuer die automatische Registrierung (Standard sonst `<dash>/auth/callback`, `<dash>/`). Fehlende Felder werden im Setup namentlich gemeldet |
 | `GET /health` signiert mit Bearer | log_in-Verbindungstest besteht |
 | Anmeldung Passwort + MFA | `ok` -> Tool erhaelt ID-Token mit `sub`, `roles`, `tenant_id` |
 | Konto sperren + `users/{sub}/revoke` | UserInfo/Refresh der Tools scheitern sofort |

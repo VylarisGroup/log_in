@@ -42,14 +42,56 @@ class DashClient
             throw new DashUnavailableException('Dash-Discovery lieferte HTTP '.$res->status());
         }
         $d = $res->json();
-        $d = is_array($d) && is_array($d['data'] ?? null) ? $d['data'] : $d; // Antwortvertrag: {"data": {...}}
-        foreach (['api_version', 'installation_id', 'public_key', 'name'] as $k) {
-            if (! is_array($d) || ! isset($d[$k]) || ! is_string($d[$k])) {
-                throw new DashProtocolException("Discovery-Feld $k fehlt");
+        if (! is_array($d)) {
+            throw new DashProtocolException('Dash-Discovery ist kein JSON-Dokument (falsche URL?)');
+        }
+        $d = is_array($d['data'] ?? null) ? $d['data'] : $d; // Antwortvertrag: {"data": {...}}
+
+        // Schluessel: Top-Level oder erster aktiver Ed25519/EdDSA-Eintrag aus keys[] (base64url wird normalisiert)
+        $pub = is_string($d['public_key'] ?? null) ? $d['public_key'] : null;
+        if ($pub === null && is_array($d['keys'] ?? null)) {
+            foreach ($d['keys'] as $k) {
+                $alg = strtolower((string) ($k['alg'] ?? $k['crv'] ?? $k['kty'] ?? ''));
+                $key = $k['public_key'] ?? $k['x'] ?? $k['key'] ?? null;
+                $active = ! isset($k['status']) || in_array($k['status'], ['active', 'current'], true);
+                if (is_string($key) && $active && (str_contains($alg, 'ed25519') || str_contains($alg, 'eddsa') || str_contains($alg, 'okp') || $alg === '')) {
+                    $pub = $key;
+                    break;
+                }
             }
         }
-        if ($d['api_version'] !== config('vylaris.api_version') || strlen(base64_decode($d['public_key'], true) ?: '') !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
-            throw new DashProtocolException('Nicht unterstuetzte API-Version oder ungueltiger Schluessel');
+        $norm = static function (?string $v): ?string {
+            if ($v === null) {
+                return null;
+            }
+            $v = strtr(trim($v), '-_', '+/');
+
+            return base64_encode((string) base64_decode($v.str_repeat('=', (4 - strlen($v) % 4) % 4), true));
+        };
+        $d['public_key'] = $norm($pub);
+        if (isset($d['box_public_key']) && is_string($d['box_public_key'])) {
+            $d['box_public_key'] = $norm($d['box_public_key']);
+        }
+
+        // API-Version: "v1", "1" oder aus api_base ableiten
+        $ver = $d['api_version'] ?? null;
+        if (! is_string($ver) && is_string($d['api_base'] ?? null) && preg_match('#/v(\d+)/?$#', $d['api_base'], $m)) {
+            $ver = 'v'.$m[1];
+        }
+        if (is_string($ver) && ctype_digit($ver)) {
+            $ver = 'v'.$ver;
+        }
+        $d['api_version'] = $ver;
+
+        $missing = array_values(array_filter(['installation_id', 'name', 'public_key', 'api_version'], fn ($k) => ! isset($d[$k]) || ! is_string($d[$k]) || $d[$k] === ''));
+        if ($missing !== []) {
+            throw new DashProtocolException('Dash-Discovery unvollstaendig, es fehlt: '.implode(', ', $missing).'. Gefundene Felder: '.implode(', ', array_slice(array_keys($d), 0, 12)).'. Dash muss die einheitliche Vylaris-API v1 anbieten.');
+        }
+        if ($d['api_version'] !== config('vylaris.api_version')) {
+            throw new DashProtocolException('Dash bietet API-Version '.$d['api_version'].', log_in braucht '.config('vylaris.api_version').'.');
+        }
+        if (strlen(base64_decode($d['public_key'], true) ?: '') !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+            throw new DashProtocolException('Der Dash-Schluessel ist kein gueltiger Ed25519-Schluessel.');
         }
         if (isset($d['box_public_key']) && (! is_string($d['box_public_key']) || strlen(base64_decode($d['box_public_key'], true) ?: '') !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES)) {
             throw new DashProtocolException('Ungueltiger X25519-Schluessel in der Discovery');

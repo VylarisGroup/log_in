@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Setup;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\EnsureInstalled;
 use App\Models\Audit;
 use App\Models\BootstrapAdmin;
 use App\Models\Setting;
@@ -65,7 +66,11 @@ class SetupController extends Controller
             'totpUri' => $totp ? Totp::uri($totp, 'setup-admin') : null,
             'dashBase' => Setting::get('dash.base_url'),
             'discovered' => $r->session()->get('setup_discovered'),
-            'bundle' => $r->session()->pull('setup_bundle'),
+            'bundleReady' => is_file($this->setup->bundlePath()),
+            'installed' => EnsureInstalled::installed(),
+            'issuer' => config('vylaris.issuer'),
+            'dbMode' => config('database.default'),
+            'registerError' => session('register_error'),
             'checks' => session('setup_checks'),
         ]);
     }
@@ -87,6 +92,35 @@ class SetupController extends Controller
         $r->session()->put('setup_ok', time());
 
         return redirect()->route('setup.index');
+    }
+
+    /** Ein-Klick-Installation: Adresse, Datenbank, Migrationen, Schluessel, Setup-Admin. */
+    public function install(Request $r): RedirectResponse
+    {
+        abort_unless($this->allowed($r) && ! $this->setup->isCompleted(), 403);
+        $d = $r->validate([
+            'issuer' => 'nullable|string|max:255', 'db_mode' => 'nullable|in:sqlite,mysql',
+            'db_host' => 'nullable|string|max:255', 'db_port' => 'nullable|string|max:6', 'db_name' => 'nullable|string|max:64',
+            'db_user' => 'nullable|string|max:64', 'db_password' => 'nullable|string|max:200',
+            'username' => 'required|string|max:40', 'password' => 'required|string|max:200', 'password_confirmation' => 'required|same:password', 'totp_code' => 'required|string|max:10',
+        ]);
+        try {
+            $this->setup->install($d, (string) $r->session()->get('setup_totp'));
+        } catch (\InvalidArgumentException $e) {
+            return back()->withErrors(['install' => $e->getMessage()])->withInput($r->except(['password', 'password_confirmation', 'db_password']));
+        }
+        $r->session()->forget('setup_totp');
+
+        return redirect()->route('setup.index');
+    }
+
+    /** Download des Bootstrap-Bundles (enthaelt Geheimnisse; nur fuer die berechtigte Setup-Sitzung). */
+    public function bundle(Request $r)
+    {
+        abort_unless($this->allowed($r) && is_file($this->setup->bundlePath()), 404);
+        Audit::log('setup.bundle_downloaded', 'setup');
+
+        return response()->download($this->setup->bundlePath(), 'dash-bootstrap.json', ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store']);
     }
 
     public function admin(Request $r): RedirectResponse
@@ -132,11 +166,18 @@ class SetupController extends Controller
             return redirect()->route('setup.index');
         }
         try {
-            $this->setup->trustDash($d['base_url'], (string) $r->input('fingerprint'));
+            $trusted = $this->setup->trustDash($d['base_url'], (string) $r->input('fingerprint'));
         } catch (\Throwable $e) {
             return back()->withErrors(['dash' => $e->getMessage()]);
         }
         $r->session()->forget('setup_discovered');
+        // Dash direkt als OIDC-Anwendung anmelden (Standard-URIs bzw. Hinweise aus der Discovery)
+        try {
+            [$redirects, $logouts] = $this->setup->defaultDashUris($trusted);
+            $r->session()->put('setup_bundle', $this->setup->registerDash($redirects, $logouts)['client_id']);
+        } catch (\Throwable $e) {
+            return redirect()->route('setup.index')->with('register_error', 'Automatische Registrierung nicht moeglich: '.$e->getMessage());
+        }
 
         return redirect()->route('setup.index');
     }
@@ -150,7 +191,7 @@ class SetupController extends Controller
         } catch (\Throwable $e) {
             return back()->withErrors(['client' => $e->getMessage()])->withInput();
         }
-        $r->session()->put('setup_bundle', $bundle);
+        $r->session()->put('setup_bundle', $bundle['client_id']);
 
         return redirect()->route('setup.index');
     }

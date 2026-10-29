@@ -15,19 +15,14 @@ Reseller <-> Dash <-> log_in <-> integrierte Tools
 
 Laravel 13 / PHP 8.3, [league/oauth2-server](https://oauth2.thephpleague.com/) 9 (gepruefte OAuth2-Kernbibliothek) mit einer eigenen, schmalen OIDC-Schicht, libsodium (Ed25519, X25519) fuer die Dash-Kommunikation, MySQL/MariaDB (SQLite fuer Tests). Keine Daemons, keine Container: Cron + PHP genuegen.
 
-## Schnellstart
+## Schnellstart (Webhosting)
 
-```bash
-composer install --no-dev --optimize-autoloader
-cp .env.example .env            # APP_URL / OIDC_ISSUER / DB_* anpassen
-php artisan key:generate
-php artisan migrate --force
-php artisan login:setup:init     # legt das Setup-Token an (nur per Dateizugriff lesbar)
-# Webroot auf public/ zeigen lassen, dann im Browser <APP_URL>/setup oeffnen
-# Cron: * * * * * php /pfad/artisan schedule:run
-```
+1. Release-Archiv (enthaelt `vendor/`) auf dem Hosting entpacken. Wer das Quell-Archiv nutzt, fuehrt einmal `composer install --no-dev --optimize-autoloader` aus.
+2. Domain auf den Ordner `public/` zeigen lassen (Fallback: eine mitgelieferte `.htaccess` im Hauptordner leitet nach `public/` um).
+3. `https://<domain>/setup` im Browser oeffnen. Beim ersten Aufruf legt log_in selbst eine lauffaehige `.env` an (`APP_KEY`, Adresse, SQLite, Datei-Sessions, Pseudo-Cron).
+4. Setup-Token aus `storage/app/setup-token.txt` (per FTP/Dateimanager) eingeben und den Assistenten durchgehen: **Installation** (Datenbank + Administrator) - **Dash verbinden** (Fingerprint bestaetigen, automatische Registrierung, `dash-bootstrap.json` laden) - **Testen und abschliessen**.
 
-Der gefuehrte Assistent legt den Setup-Admin, die Schluessel und die Dash-Anbindung an, registriert Dash als erste OIDC-Anwendung und fuehrt Verbindungs- und Integritaetstest aus. Details: [docs/SETUP.md](docs/SETUP.md), [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
+Kein Terminal, kein Cron-Eintrag und keine manuelle `.env`-Bearbeitung noetig. Details: [docs/SETUP.md](docs/SETUP.md), [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
 
 ## Endpunkte (Kurzuebersicht)
 
