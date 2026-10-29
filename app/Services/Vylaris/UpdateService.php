@@ -3,6 +3,7 @@
 namespace App\Services\Vylaris;
 
 use App\Models\Audit;
+use App\Support\Version;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
@@ -29,7 +30,7 @@ class UpdateService
             throw new \RuntimeException('GitHub-Releases nicht abrufbar (HTTP '.$res->status().')');
         }
         $tag = (string) $res->json('tag_name');
-        $latest = ltrim($tag, 'v');
+        $latest = Version::isValid($tag) ? ltrim($tag, 'v') : ''; // Tags ausserhalb des Schemas werden ignoriert
         $assets = collect($res->json('assets') ?? []);
         $url = fn (string $name) => $assets->firstWhere('name', $name)['browser_download_url'] ?? null;
 
@@ -37,7 +38,7 @@ class UpdateService
             'current' => (string) config('vylaris.version'),
             'latest' => $latest ?: null,
             'tag' => $tag ?: null,
-            'update_available' => $latest !== '' && version_compare($latest, (string) config('vylaris.version'), '>'),
+            'update_available' => $latest !== '' && Version::compare($latest, Version::current()) > 0,
             'asset_url' => $url("log_in-{$latest}.zip"),
             'sums_url' => $url('SHA256SUMS'),
             'sig_url' => $url('SHA256SUMS.sig'),

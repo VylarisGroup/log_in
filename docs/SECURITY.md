@@ -29,7 +29,7 @@
 
 ## Tests
 
-Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **115 Tests, 115 bestanden, 812 Assertions**.
+Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **116 Tests, 116 bestanden, 825 Assertions**.
 
 | Datei | Tests | Schwerpunkt |
 |---|---|---|
@@ -41,7 +41,7 @@ Letzter Lauf (`php artisan test`, SQLite in-memory, simuliertes Dash): **115 Tes
 | `KeyRotationTest` | 5 | Rotation, Ueberlappung, Widerruf, JWKS |
 | `SetupBootstrapTest` | 11 | Token, Admin/TOTP, Fingerprint, Bundle inkl. Service-Token, Aktivierung, Recovery, Sperre nach Abschluss |
 | `InstallerTest` | 12 | `.env`-Provisionierung, Web-Installation (Admin, Schluessel, Issuer), Ablehnung schwacher Eingaben, automatische Dash-Registrierung, Bundle-Download, Abschluss mit Verbindungstest, tolerante Discovery, Setup-Weiterleitung ohne Datenbank, Pseudo-Cron |
-| `UpdateServiceTest` | 3 | Pruefsummen, Release-Abgleich |
+| `UpdateServiceTest` | 4 | Pruefsummen, Release-Abgleich |
 | `CryptoAndPolicyTest` | 6 | Signer, TOTP, UriPolicy |
 | `SignatureVectorsTest` | 2 | gemeinsame deterministische Vektoren (`docs/test-vectors.json`: Request, Response, Pairing-Nachweis) |
 

@@ -2,7 +2,20 @@
 
 ## Versionierung und Quelle
 
-SemVer (`config/vylaris.php` -> `version`, aktuell `1.0.0`). Updates stammen **ausschliesslich** aus den GitHub-Releases von `VylarisGroup/log_in` (fest im Code, nicht konfigurierbar). Der Workflow `.github/workflows/release.yml` baut bei jedem Tag `v*` das Archiv `log_in-<version>.zip` (inkl. `vendor/`) und `SHA256SUMS`.
+Schema **`JJ.BB.CCDD`**, Git-Tag **`vJJ.BB.CCDD`** (z. B. `v26.01.0200`). Einzige Quelle ist die Datei `VERSION` im Hauptordner (`config('vylaris.version')` liest sie).
+
+| Teil | Bedeutung | Bereich |
+|---|---|---|
+| `JJ` | Jahreskuerzel (26, 27, ...) | 2 Stellen |
+| `BB` | Hauptversion: grosse, neue Funktion | 01-99 |
+| `CC` | Nebenversion: kleine Updates | 00-99 |
+| `DD` | Fehlerkorrekturen (Bugfixes) | 00-20 |
+
+Ueberlauf: nach `DD` = 20 steigt `CC`, nach `CC` = 99 steigt `BB`. Ein neues Jahr beginnt mit `JJ.01.0000`. Neue Hauptversion setzt `CC` und `DD` auf 00, eine neue Nebenversion setzt `DD` auf 00.
+
+`DD` hat zwei Stellen, damit bis zu 20 Fehlerkorrekturen eindeutig darstellbar sind; `CC` wird nur bis 99 gezaehlt, damit die Zerlegung eindeutig bleibt. Reihenfolge und Vergleich: `App\Support\Version`. Tags ausserhalb des Schemas (z. B. alte `1.x`-Tags) werden vom Update ignoriert; eine Installation mit alter Versionsnummer gilt als aelter als jede Version im neuen Schema.
+
+Release: `VERSION` anheben, committen, Tag `v<VERSION>` setzen. Der Workflow `.github/workflows/release.yml` bricht ab, wenn Tag und `VERSION` nicht uebereinstimmen oder das Schema verletzt ist, und baut sonst `log_in-<version>.zip` (inkl. `vendor/`) und `SHA256SUMS`. Updates stammen **ausschliesslich** aus den GitHub-Releases von `VylarisGroup/log_in` (fest im Code, nicht konfigurierbar).
 
 ## Befehle
 

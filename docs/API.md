@@ -12,7 +12,7 @@ Einziger Pfadraum fuer Maschinenkommunikation: **`/api/vylaris/v1`** (zentral in
 | OIDC-Metadaten | `GET /.well-known/openid-configuration`, `GET /.well-known/jwks.json` | nein (Standard) |
 | Dash-Discovery (von Dash bereitzustellen) | `GET <dash>/.well-known/vylaris-dash` | nein |
 
-Discovery-Antwort log_in: `{"data":{"service":"log_in","api_version":"v1","version":"1.1.0","installation_id":"...","name":"Vylaris log_in","public_key":"<Ed25519 b64>","issuer":"https://...","api_base":"https://.../api/vylaris/v1","openid_configuration":"https://.../.well-known/openid-configuration"}}`. Der Schluessel ist erst nach Fingerprint-Bestaetigung vertrauenswuerdig.
+Discovery-Antwort log_in: `{"data":{"service":"log_in","api_version":"v1","version":"26.01.0200","installation_id":"...","name":"Vylaris log_in","public_key":"<Ed25519 b64>","issuer":"https://...","api_base":"https://.../api/vylaris/v1","openid_configuration":"https://.../.well-known/openid-configuration"}}`. Der Schluessel ist erst nach Fingerprint-Bestaetigung vertrauenswuerdig.
 
 ## 2. Authentifizierung (jeder Maschinenrequest)
 

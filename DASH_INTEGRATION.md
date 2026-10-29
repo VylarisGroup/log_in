@@ -1,6 +1,6 @@
 # DASH_INTEGRATION - Briefing fuer die Code-KI, die Dash baut
 
-Gilt fuer **Vylaris log_in 1.1.0** und folgt dem gemeinsamen "Master Implementation Prompt - Vylaris Unified API". Beschrieben ist ausschliesslich, was in log_in real implementiert und getestet ist. Massgeblich im Zweifel: `docs/openapi.yaml`, `docs/test-vectors.json`, `docs/API.md`, `docs/PAIRING-PROTOCOL.md`, der Code (`app/Services/Vylaris/Signer.php`, `app/Http/Middleware/VerifyMachineRequest.php`) und das Referenz-Dash `tests/Support/FakeDash.php`.
+Gilt fuer **Vylaris log_in 26.01.0200** und folgt dem gemeinsamen "Master Implementation Prompt - Vylaris Unified API". Beschrieben ist ausschliesslich, was in log_in real implementiert und getestet ist. Massgeblich im Zweifel: `docs/openapi.yaml`, `docs/test-vectors.json`, `docs/API.md`, `docs/PAIRING-PROTOCOL.md`, der Code (`app/Services/Vylaris/Signer.php`, `app/Http/Middleware/VerifyMachineRequest.php`) und das Referenz-Dash `tests/Support/FakeDash.php`.
 
 Architektur: `Reseller -> Dash <-> log_in -> OIDC-Clients/Tools`. Dash ist die Quelle der Wahrheit fuer Konten, Mandanten, Rollen, MFA, Tool-Installationen. log_in hat keinen Zugriff auf die Dash-Datenbank, besitzt keine Konten und laeuft nicht ohne Dash. Reseller spricht nie mit log_in.
 
